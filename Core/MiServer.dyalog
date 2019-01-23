@@ -292,7 +292,7 @@
     ∇ Make config;CongaVersion;rc;allocated;port;ports
       :Access Public
       :Implements Constructor
-      ⎕SE.SALT.Load ',#.Boot.MSRoot,'Profiler.dyalog -target=#'
+      ⎕SE.SALT.Load #.Boot.MSRoot,'Profiler.dyalog -target=#'
       SessionHandler←⎕NS''
       Authentication←⎕NS''
       Logger←⎕NS''
