@@ -292,7 +292,7 @@
     ∇ Make config;CongaVersion;rc;allocated;port;ports
       :Access Public
       :Implements Constructor
-      ⎕SE.UCMD'LOAD ',#.Boot.MSRoot,'Profiler.dyalog -target=#'
+      ⎕SE.SALT.Load ',#.Boot.MSRoot,'Profiler.dyalog -target=#'
       SessionHandler←⎕NS''
       Authentication←⎕NS''
       Logger←⎕NS''
@@ -415,7 +415,7 @@
     ∇ r←conns HandleRequest arg;rc;obj;evt;data;REQ;res;startsize;length;ext;filename;enc;encodeMe;cacheMe;which;encoderc;html;enctype;status;response;hdr;done;offset;z;tn;file;cookie;ai;wa
     ⍝ conns - connection namespace
     ⍝ arg [1] conga rc [2] object name [3] event [4] data
-      ai←#.Profiler'HandleRequest' ⋄ wa←2000⌶1 14
+      ai←#.Profiler'HandleRequest',40↑,⍕arg  ⋄ wa←2000⌶1 14
       r←0
       arg←,⊆arg
       (rc obj evt data)←4↑arg,(⍴arg)↓0 '' '' ''
@@ -436,6 +436,7 @@
       REQ.Server←⎕THIS ⍝ Request will also contain reference to the Server
       res←REQ.Response
       startsize←length←0
+      
       ai←#.Profiler('processing REQ - size REQ/conns=',⍕⎕SIZE'REQ' 'conns')ai
       :If 200=res.Status
           :If 2=conns.⎕NC'PeerAddr' ⋄ REQ.PeerAddr←conns.PeerAddr ⋄ :EndIf       ⍝ Add Client Address Information
