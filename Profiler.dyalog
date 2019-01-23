@@ -16,12 +16,13 @@ msg←,⊆rarg
  fnam←#.Boot.AppRoot,'Logs/Perf.csv'
  msg←{6::'' ⋄ ⍎⍵}'1⊃msg'
  ⍝ Columns are:
- ⍝ TS,AI[3],Stack,msg,Mem Used,Mem HighWaterMark,Msg
- msg←(⍕⎕TS),',',(⍕⎕AI[3]),',',(2⊃⎕NSI),'.',(2⊃⎕SI),'[',(⍕2⊃⎕LC),'] - &',(⍕⎕tid),',',msg,',',∊(⍕¨⌊.001×2000⌶1 14),¨','
+ ⍝ TS,AI[3],Stack,msg,Mem Used,Mem HighWaterMark,# of threads,Msg
+ msg←(⍕⎕TS),',',(⍕⎕AI[3]),',',(2⊃⎕NSI),'.',(2⊃⎕SI),'[',(⍕2⊃⎕LC),'] - &',(⍕⎕tid),',',msg,',',∊(⍕¨⌊.001×2000⌶1 14),¨',',(⍕⍴⎕tid),','
+ :trap 0
  :If 1=≡rarg
      (⊂msg,'0',⎕UCS 13)⎕NPUT fnam 2
  :Else
      (⊂msg,(⍕ai-2⊃rarg),⎕UCS 13)⎕NPUT fnam 2
  :EndIf
- 
+ :endtrap
  r←⎕AI[3]
