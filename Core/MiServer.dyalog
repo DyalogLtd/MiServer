@@ -128,10 +128,10 @@
       ⍝ Assumes Conga available in #.DRC and uses #.HTTPRequest
       ⍝ arg: dummy
       ⍝ certs: RootCertDir, ServerCert, ServerKey (optional: runs Secure server)
-     
+      #.DRC.SetProp'.' 'Trace' 8193   ⍝ MB: logging for BHC
       Stop←0
       StartTime←⎕TS
-      ai←#.Profiler'Started'
+      ai←1 #.Profiler'Started'
       :If Config.TrapErrors>0
           ⎕TRAP←#.DrA.TrapServer
           #.DrA.NoUser←1+#.DrA.MailRecipient∨.≠' '
@@ -144,13 +144,13 @@
       :While ~Stop
           wres←#.DRC.Wait ServerName Config.WaitTimeout ⍝ Wait for WaitTimeout before timing out
           ⍝ wres: (return code) (object name) (command) (data)
-          (rc obj evt data)←4↑wres
+          (rc obj evt data)←4↑wres ⋄ ai←1 #.Profiler('Got data from DRC.Wait: ',60↑,⍕evt data)ai
           :Select rc
           :Case 0 ⍝ Good data from RPC.Wait
               :Select evt
      
               :Case 'Error'
-                  :If ServerName≡obj
+                  1 Profiler'Error!',,⍕wres ⋄ :If ServerName≡obj
                       Stop←1
                   :Else
                       ConnectionDelete obj
@@ -160,21 +160,18 @@
                   :EndIf
      
               :Case 'Connect'
-                  ai←#.Profiler('New Connection. Size=',⍕⎕SIZE'conn')ai
-                  ConnectionNew obj
-                  ai←#.Profiler'ended processing of Connect-Request'ai
+                  ai←1 #.Profiler('New Connection. obj=',,⍕obj)ai ⋄ ConnectionNew obj ⋄ ai←1 #.Profiler'ended processing of Connect-Request'ai
      
               :CaseList 'HTTPHeader' 'HTTPTrailer' 'HTTPChunk' 'HTTPBody'
-                  :If 0≢conx←1 ConnectionUpdate obj
-                      ai←#.Profiler('Spawning thread to HandleRequest. Size wres=',⍕⎕SIZE'wres')ai
-                      {}conx{{}⍺ HandleRequest ⍵}&wres
-                      ai←#.Profiler'Done'ai
+                  ai←1 #.Profiler'Updating connection'ai ⋄ :If 0≢conx←1 ConnectionUpdate obj
+                      ai←1 #.Profiler('Spawning thread to HandleRequest. obj=',,⍕obj)ai ⋄ {}conx{{}⍺ HandleRequest ⍵}&wres
+                      ai←1 #.Profiler'Done'ai
                   :Else
                       ∘∘∘ ⍝!!! debug !!!
                   :EndIf
      
               :Case 'Timeout'
-                  SessionHandler.HouseKeeping ⎕THIS
+                  1 #.Profiler'Timeout!'ai ⋄ SessionHandler.HouseKeeping ⎕THIS
                   :If 0<Config.IdleTimeout ⍝ if an idle timeout (in seconds) has been specified
                   :AndIf Config.IdleTimeout<86400×-/(ts←#.Dates.DateToIDN ⎕TS)idletime ⍝ has it passed?
                       onIdle
@@ -182,7 +179,7 @@
                   :EndIf
      
               :Case 'Closed'
-                  ConnectionDelete obj
+                  0 #.Profiler'Closing ',⍕obj ⋄ ConnectionDelete obj
      
               :Else ⍝ unhandled event
                   2 Log'Unhandled Conga event:'
@@ -412,10 +409,10 @@
       :EndIf
     ∇
 
-    ∇ r←conns HandleRequest arg;rc;obj;evt;data;REQ;res;startsize;length;ext;filename;enc;encodeMe;cacheMe;which;encoderc;html;enctype;status;response;hdr;done;offset;z;tn;file;cookie;ai;wa
+    ∇ r←conns HandleRequest arg;rc;obj;evt;data;REQ;res;startsize;length;ext;filename;enc;encodeMe;cacheMe;which;encoderc;html;enctype;status;response;hdr;done;offset;z;tn;file;cookie;wa;ai
     ⍝ conns - connection namespace
     ⍝ arg [1] conga rc [2] object name [3] event [4] data
-      ai←#.Profiler'HandleRequest',40↑,⍕arg  ⋄ wa←2000⌶1 14
+      ai←1 #.Profiler'HandleRequest',40↑,⍕arg ⋄ wa←2000⌶1 14
       r←0
       arg←,⊆arg
       (rc obj evt data)←4↑arg,(⍴arg)↓0 '' '' ''
@@ -431,13 +428,11 @@
       :EndSelect
      
       →0↓⍨conns.Req.Complete ⍝ exit if request is not complete
-      ai←#.Profiler'got a complete REQ'ai
-      REQ←conns.Req
+      ai←1 #.Profiler'got a complete REQ'ai ⋄ REQ←conns.Req
       REQ.Server←⎕THIS ⍝ Request will also contain reference to the Server
       res←REQ.Response
       startsize←length←0
-      
-      ai←#.Profiler('processing REQ - size REQ/conns=',⍕⎕SIZE'REQ' 'conns')ai
+      ai←1 #.Profiler('processing REQ - size REQ/conns=',⍕⎕SIZE'REQ' 'conns')ai
       :If 200=res.Status
           :If 2=conns.⎕NC'PeerAddr' ⋄ REQ.PeerAddr←conns.PeerAddr ⋄ :EndIf       ⍝ Add Client Address Information
           8 Log REQ.(PeerAddr Method Page)
@@ -447,15 +442,15 @@
           REQ.OrigPage←REQ.Page ⍝ capture the original page
           REQ.Page←Config.DefaultPage{∧/⍵∊'/\':'/',⍺ ⋄ '/\'∊⍨¯1↑⍵:⍵,⍺ ⋄ ⍵}REQ.Page ⍝ no page specified? use the default
           REQ.Page,←(~'.'∊{⍵/⍨⌽~∨\'/'=⌽⍵}REQ.Page)/Config.DefaultExtension ⍝ no extension specified? use the default
-          ext←⊃¯1↑#.Files.SplitFilename filename←Config Virtual REQ.Page
+          ext←1↓⊃¯1↑#.Files.SplitFilename filename←Config Virtual REQ.Page
      
-          SessionHandler.GetSession REQ
-          Authentication.Authenticate REQ
-          :If REQ.Response.Status≠401 ⍝ Authentication did not fail
+          ai←1 #.Profiler'getting session'ai ⋄ SessionHandler.GetSession REQ
+          ai←1 #.Profiler'authenticating'ai ⋄ Authentication.Authenticate REQ
+          ai←1 #.Profiler'checking REQ.Response.Status' ⋄ :If REQ.Response.Status≠401 ⍝ Authentication did not fail
               :If Config.AllowedHTTPMethods∊⍨⊂REQ.Method
-                  onHandleRequest REQ ⍝ overridable
+                  ai←1 #.Profiler'onHandleRequest'ai ⋄ onHandleRequest REQ ⋄ ai←1 #.Profiler'done'ai ⍝ overridable
                   :If REQ.Page endswith Config.DefaultExtension ⍝ MiPage?
-                      filename HandleMSP REQ
+                      ai←1 #.Profiler'calling HandleMSP'ai ⋄ filename HandleMSP REQ ⋄ ai←1 #.Profiler'done'ai
                   :Else
                       :If REQ.Method≡'get'
                           REQ.ReturnFile filename
@@ -467,23 +462,22 @@
                   REQ.Fail 405 ⍝ Method Not Allowed
               :EndIf
           :EndIf
-          ai←#.Profiler'got Page and authenticated'ai
-          cacheMe←encodeMe←0
+          ai←1 #.Profiler'got Page and authenticated'ai ⋄ cacheMe←encodeMe←0
           :If 200=res.Status
               :If Config.UseContentEncoding
               :AndIf ~0∊⍴enc←','#.Utils.penclose' '~⍨REQ.GetHeader'accept-encoding' ⍝ check if client supports encoding
               :AndIf encodeMe←~(⊂ext)∊'png' 'gif' 'jpg' 'mp4' ⍝ don't try to compress compressed graphics, should probably add zip files, etc
-                  ai←#.Profiler'now dealing with encoding'ai
-                  :If 1=res.File ⍝ Sending a file?  (See HTTPRequest.ReturnFile)
+                  ai←1 #.Profiler'now dealing with encoding'ai ⋄ :If 1=res.File ⍝ Sending a file?  (See HTTPRequest.ReturnFile)
                       cacheMe←0≠Config.HTTPCacheTime
                       (startsize length)←0,2 ⎕NINFO file←res.HTML
-                      :If encodeMe←∧/2≤/1⌽length,⍨⌽Config.DirectFileSize ⍝ see if it falls within the size parameters
+                      :If encodeMe←1⍝∧/2≤/1⌽length,⍨⌽Config.DirectFileSize ⍝ see if it falls within the size parameters
                           :Trap 0
-                              tn←file ⎕NTIE 0
+                          ai←5 #.Profiler('Reading file ',file)ai⋄tn←file ⎕NTIE 0
                               res.HTML←⎕NREAD tn 83 length 0
                               ⎕NUNTIE tn
+                              ai←5 #.Profiler'Got it'ai
                           :Else
-                              encodeMe←length←res.(HTML File)←0
+                          ai←5 #.Profiler('Failed with error ',(⍕en),' ',⍕⎕em)ai⋄                              encodeMe←length←res.(HTML File)←0
                               REC.Fail 500 404[1+⎕EN=22]
                               →SEND
                           :EndTrap
@@ -492,7 +486,7 @@
      
                   :If encodeMe
                   :AndIf 0≠which←⊃Encoders.Encoding{(⍴⍺){(⍺≥⍵)/⍵}⍺⍳⍵}enc ⍝ try to match what encodings they accept to those we provide
-                      (encoderc html)←Encoders[which].Compress res.HTML
+                  ai←1 #.Profiler('Now compressing res.HTML using ',Encoders[which].Encoding)ai⋄(encoderc html)←Encoders[which].Compress res.HTML
                       :If 0=encoderc
                           length←startsize←⍴res.HTML
                           :If startsize>⍴html ⍝ did we save anything by compressing
@@ -509,21 +503,17 @@
                   :ElseIf 0=res.File
                       startsize←length←⍴res.HTML←∊res.HTML
                   :EndIf
-                  ai←#.Profiler'done encoding'ai
-              :EndIf
+                  ai←1 #.Profiler'done encoding'ai ⋄ :EndIf
      
               :If cacheMe ⍝ if cacheable, set expires
-              :AndIf 0<Config.HTTPCacheTime
-                  ai←#.Profiler'setting cache-expiration'ai
-                  res.Headers⍪←'Expires'(Config.HTTPCacheTime #.Dates.HTTPDate ⎕TS)
-                  ai←#.Profiler'Done'ai
+              :AndIf 0<Config.HTTPCacheTime⋄                  ai←1 #.Profiler'setting cache-expiration'ai
+                  res.Headers⍪←'Expires'(Config.HTTPCacheTime #.Dates.HTTPDate ⎕TS)⋄                  ai←1 #.Profiler'Done'ai
               :EndIf
           :EndIf
       :EndIf
      
      SEND:
-      ai←#.Profiler'SEND-Preparations'ai
-      res.Headers⍪←{0∊⍴⍵:'' '' ⋄ 'Server'⍵}Config.Server
+      ai←1 #.Profiler'SEND-Preparations'ai ⋄ res.Headers⍪←{0∊⍴⍵:'' '' ⋄ 'Server'⍵}Config.Server
       status←(⊂'HTTP/1.1'),res.((⍕Status)StatusText)
       :If res.File>encodeMe
           response←''res.HTML
@@ -536,13 +526,10 @@
       done←length≤offset←⍴res.HTML
       res.MSec-⍨←⎕AI[3]
       res.Bytes←startsize length
-      ai←#.Profiler('PreSend for ',filename)ai
-      :If 0≠1⊃z←#.DRC.Send obj(status,res.Headers response)
+      ai←5 #.Profiler('PreSend for ',filename,' / ',(⍕res.Bytes),' Bytes')ai ⋄ :If 0≠1⊃z←#.DRC.Send obj(status,res.Headers response)
           (1+(1⊃z)∊1008 1119)Log'"HandleRequest" closed socket ',obj,' due to error: ',(⍕z),' sending response'
       :EndIf
-      ai←#.Profiler('PostSend for ',filename)ai
-      conns.(LastActive Active)←0
-     
+      ai←5 #.Profiler('PostSend for ',filename)ai ⋄ conns.(LastActive Active)←0
       :If REQ.CloseConnection
           ConnectionDelete conns
       :Else
@@ -550,14 +537,12 @@
       :EndIf
      
       8 Log REQ.PeerAddr status
-      Logger.Log REQ
-      #.Profiler('END. wa[used watermark] / delta =',⍕wa{⍵,⍵-⍺}2000⌶1 14)ai
+      Logger.Log REQ ⋄ 1 #.Profiler('END. wa[used watermark] / delta =',⍕wa{⍵,⍵-⍺}2000⌶1 14)ai
     ∇
 
     ∇ file HandleMSP REQ;⎕TRAP;inst;class;z;props;lcp;args;i;ts;date;n;expired;data;m;oldinst;names;html;sessioned;page;root;MS3;token;mask;resp;t;RESTful;APLJax;flag;path;name;ext;list;fn;msg;ai;wa
     ⍝ Handle a "MiServer Page" request
-      ai←#.Profiler'HandleMSP ',file ⋄ wa←2000⌶1 14
-      path name ext←#.Files.SplitFilename file
+      ai←1 #.Profiler'HandleMSP ',file ⋄ wa←2000⌶1 14 ⋄ path name ext←#.Files.SplitFilename file
      RETRY:
      
       :If 1≠n←⊃⍴list←''#.Files.List file ⍝ does the file exist?
@@ -587,8 +572,7 @@
       :AndIf 0≠⍴REQ.Session.Pages     ⍝ Look for existing Page in Session
       :AndIf (n←⍴REQ.Session.Pages)≥i←REQ.Session.Pages._PageName⍳⊂REQ.Page
           inst←i⊃REQ.Session.Pages ⍝ Get existing instance
-          ai←#.Profiler'loaded instances. Size=',(⍕⎕SIZE'inst')
-          :If expired←inst._PageDate≢date  ⍝ Timestamp unchanged?
+          ai←1 #.Profiler'loaded instances. Size=',(⍕⎕SIZE'inst') ⋄ :If expired←inst._PageDate≢date  ⍝ Timestamp unchanged?
           :AndIf expired←(⎕SRC⊃⊃⎕CLASS inst)≢(1 #.Files.ReadText file)~⊂''
               oldinst←inst
               REQ.Session.Pages~←inst
@@ -704,11 +688,9 @@
           :If flag←APLJax
           :AndIf flag←inst.{6::0 ⋄ _DebugCallbacks}⍬
           :EndIf
-     
-          ai←#.Profiler'PreRender'ai
+          ai←2 #.Profiler'Preparing to Compose'ai
           :Trap 85   ⍝ we use 85⌶ because "old" MiPages use REQ.Return internally (and don't return a result)...
               resp←flag Debugger'inst.',fn,(MS3⍱RESTful)/' REQ'  ⍝ ... whereas "new" MiPages return the HTML they generate
-              ai←#.Profiler'PostRender'ai
               resp←(#.JSON.toAPLJAX⍣APLJax)resp
               inst._TimedOut←0
      
@@ -724,13 +706,12 @@
                   1 Log'No result returned by callback method "',fn,'" in page "',REQ.Page,'"'
                   REQ.Return''
               :EndIf
-          :EndTrap
+          :EndTrap ⋄ ai←2 #.Profiler'Post Compose'ai
      
           :If APLJax⍱RESTful
               'Content-Type'REQ.SetHeaderIfNotSet'text/html;charset=utf-8'
           :EndIf
-          ai←#.Profiler'PreWrap'ai
-          :If ~REQ.Response.NoWrap
+          ai←4 #.Profiler('PreWrap for ',REQ.Page)ai ⋄ :If ~REQ.Response.NoWrap
               :If MS3∨RESTful
                   inst.Wrap
               :Else
@@ -739,9 +720,8 @@
           :ElseIf MS3>APLJax
               inst.Render
           :EndIf
-      :EndHold
-      #.Profiler('EndWrap. wa[used highWater]=',⍕wa{⍵,⍵-⍺}2000⌶1 14)ai
-      →0
+          ai←4 #.Profiler('PostWrap for ',REQ.Page)ai ⋄ :EndHold
+      1 #.Profiler('End HandleMSP. wa[used highWater]=',∊⍕(wa{⍵,⍵-⍺}2000⌶1 14),¨⊂' / ')ai ⋄ →0
      
      FAIL:
       ⎕←'* Carrying on...'

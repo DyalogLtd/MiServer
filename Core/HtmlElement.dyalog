@@ -558,16 +558,16 @@
       :Access overridable
     ∇
 
-    ∇ r←RenderCore list;e;t
+    ∇ r←RenderCore list;e;t;ai
       :Access public
     ⍝ do the bulk of the rendering work
       r←''
       list←{0=⍴⍴⍵:{1<|≡⍵:⊃⍵ ⋄ ⍵}⍵ ⋄ ⍵}list
       :For e :In eis list
           :If isInstance⊃e
-              r,←e.Render
+          r,←e.Render
           :ElseIf isClass⊃e
-              r,←(New e).Render
+               r,←(New e).Render
           :Else
               :If 1<⍴⍴t←⍕e
                   t←∊(↓t),¨⊂'<br/>'
