@@ -1,7 +1,7 @@
 ﻿ {r}←{cat}Profiler rarg;fnam;msg;ai;ts
- r←0 ⋄ prf←⎕ai[3]
+ r←0 ⋄ prf←⎕AI[3]
  msg←(⍕⎕AI[3]),',',({326=⎕DR ⍵:1⊃⍵ ⋄ ⍵}rarg),','
- msg,←,(2⊃⎕NSI),'.',(2⊃⎕SI),'[',(⍕2⊃⎕LC),'],',(⍕⎕TID),',',{0::'0' ⋄ '"',(⍕⍎'cat'),'"'}0
+ msg,←,(2⊃⎕NSI),'.',(2⊃⎕SI),'[',(⍕2⊃⎕LC),'],',(⍕⎕TID),',',{0::'0' ⋄ ⍵:⍕cat ⋄ '0'}2=⎕NC'cat'
  :If 0=#.Boot.⎕NC'ms'
      →0
  :ElseIf 0=#.Boot.ms.⎕NC'PerfLogFile'
@@ -11,7 +11,7 @@
      :EndIf
  :EndIf
  (⊂msg,⎕UCS 13)⎕NPUT #.Boot.ms.PerfLogFile 2
- ⎕←'logging=',⎕ai[3]-prf
+ ⎕←'logging=',⎕AI[3]-prf
  →0
 
 
