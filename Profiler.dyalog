@@ -10,15 +10,15 @@
          ⎕←'*** Profiling into ',#.Boot.ms.PerfLogFile←#.Boot.AppRoot,'Logs/Perf',(⍕i),'.csv'
      :EndIf
  :EndIf
- :trap 0   ⍝ shouldn't be neccessary, but Jenkins had an issue during its test of the latest version...
- (⊂msg,⎕UCS 13)⎕NPUT #.Boot.ms.PerfLogFile 2
- ⎕←'logging=',⎕AI[3]-prf
- :else
- ⎕←'⎕DR msg=',⍕⎕dr msg 
- ⎕←'logfile=', #.Boot.ms.PerfLogFile
- ⎕←⎕dm 
- ⎕←⎕dmx
- :endif
+ :Trap 0   ⍝ shouldn't be neccessary, but Jenkins had an issue during its test of the latest version...
+     (⊂msg,⎕UCS 13)⎕NPUT #.Boot.ms.PerfLogFile 2
+ ⍝⎕←'logging=',⎕AI[3]-prf
+ :Else
+     ⎕←'⎕DR msg=',⍕⎕DR msg
+     ⎕←'logfile=',#.Boot.ms.PerfLogFile
+     ⎕←⎕DM
+     ⎕←⎕DMX
+ :EndTrap
  →0
 
 
