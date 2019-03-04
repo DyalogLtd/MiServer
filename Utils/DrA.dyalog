@@ -306,7 +306,6 @@
       :If ~#.Files.DirExists Dir
           #.Files.MkDir Dir
       :EndIf
-     
       :If 0≠TN←{0::0 ⋄ ⍵ ⎕FSTIE 0}Dir,F        ⍝ Is there already a file for this error from today?
           TS←(⎕FREAD TN,1)get'TimeStamps'
           ((2,(1⊃Info)⍳⊂'TimeStamps')⊃Info)←TS,Info get'TimeStamps'
@@ -321,9 +320,9 @@
       →0
      
      ELSE:
-      F←''
       ⎕TRAP←0 'S' ⍝ 0 'C' '→0'
       'Error Logging System'GuiMessage('Unable to create error log file' ''(Dir,F))'E' 'O'
+      F←''
     ∇
 
     ∇ _R←Resume;_T;_Q
