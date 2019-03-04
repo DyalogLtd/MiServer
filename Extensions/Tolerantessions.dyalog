@@ -56,9 +56,14 @@
           session←req.GetCookie'Session' 
           now←#.Dates.DateToIDN ⎕TS 
           :If new←(1⊃⍴Sessions)<i←Sessions.Cookie⍳⊂session ⍝ Cookie is not in the table 
+      6 #.Profiler'session="',session,'" -> new session'
+              :if 0<≢session
+              c←session ⍝ use what was sent
+              :else 
               c←SessionCookie NextSession 
-      6 #.Profiler'"session=',session,' -> new session as ',c,'"'
+              :endif
               Sessions←Sessions,r←⎕NEW Session 
+              0 #.Profiler'# of Sessions=',⍕≢Sessions
               r.(ID User LastActive Cookie State Server)←NextSession''now c(⎕NS'')Server 
               NextSession←(2*30)|NextSession+1 
 ⍝ai←#.Profiler'preparing to []FSTIE'ai
@@ -73,9 +78,11 @@
               ai←1 #.Profiler    'Created new session'ai
           :Else ⍝ Old session 
                 6 #.Profiler'session="',session,'"  -> old session'
+
               (r←i⊃Sessions).LastActive←now ⍝ Just register activity 
               r.New←0 
               req.Session←r 
+              ai←1 #.Profiler'Found previous session'ai
           :EndIf 
       
       :EndHold 

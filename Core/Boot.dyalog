@@ -10,6 +10,11 @@
       Load AppRoot ⍝ load essential objects
       ms←Init ConfigureServer AppRoot ⍝ read configuration and create server instance
       Configure ms
+      ⍝ Baas: initialize logfile
+     :If ⎕NEXISTS #.Boot.AppRoot,'Logs/' ⋄ i←1 
+         :While ⎕NEXISTS #.Boot.AppRoot,'Logs/Perf',(⍕i),'.csv' ⋄ i+←1 ⋄ :EndWhile
+         ⎕←'*** Profiling into ',ms.PerfLogFile←#.Boot.AppRoot,'Logs/Perf',(⍕i),'.csv'
+     :EndIf
       ms.Run
     ∇
 

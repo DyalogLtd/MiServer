@@ -33,7 +33,8 @@
     <HTTPCacheTime>60m</HTTPCacheTime>                  <!-- time to cache static content, 0 = no caching --> 
 
 <!-- Extensions -->
-    <SessionHandler>SimpleSessions</SessionHandler>     <!-- name of class to perform session management -->
+    <!-- <SessionHandler>Tolerantessions</SessionHandler> -->    <!-- name of class to perform session management --> 
+    <SessionHandler>SimpleSessions</SessionHandler>
     <SessionTimeout>30m</SessionTimeout>                <!-- session timeout -->
     <Authentication>SimpleAuth</Authentication>         <!-- name of class to perform Basic HTTP authentication -->
     <Logger>Logger</Logger>                             <!-- name of class to perform HTTP request loggin -->
