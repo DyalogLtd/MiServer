@@ -123,7 +123,7 @@
     ∇
     :endsection
 
-    ∇ r←RunServer arg;Stop;StartTime;⎕TRAP;idletime;wres;rc;obj;evt;data;conx;ts;ai;i
+    ∇ r←RunServer arg;Stop;StartTime;⎕TRAP;idletime;wres;rc;obj;evt;data;conx;ts;congaError;ai;i
       ⍝ Simple HTTP (Web) Server framework
       ⍝ Assumes Conga available in #.DRC and uses #.HTTPRequest
       ⍝ arg: dummy
@@ -137,7 +137,7 @@
       :EndIf ⍝ Trap MiServer Errors. See HandleMSP for Page Errors.
      
       onServerStart ⍝ meant to be overridden
-
+     
       idletime←#.Dates.DateToIDN ⎕TS
      
       :While ~Stop
@@ -156,7 +156,7 @@
                       ConnectionDelete obj
                   :EndIf
                   :If 0≠4⊃wres
-                      (1+(4⊃wres)∊1008 1105 1119)Log'RunServer: DRC.Wait reported error ',(⍕#.Conga.Error 4⊃wres),' on ',2⊃wres
+                      (1+(4⊃wres)∊1008 1105 1119)Log'RunServer: DRC.Wait reported error ',(⍕congaError 4⊃wres),' on ',2⊃wres
                   :EndIf
      
               :Case 'Connect'

@@ -251,6 +251,35 @@
       :If 0=⍴⍴r ⋄ r←⊃r ⋄ :EndIf
     ∇
 
+    ∇ SubstEnv config;getEnv;subst;n;v
+    ⍝ substitute environment variables for items with values im the form $envName$
+    ⍝ config is a configuration result from ReadConfiguration
+    ⍝   it should be either a namespace reference, or a vector of namespace references
+      getEnv←{2 ⎕NQ'.' 'GetEnvironment'⍵}
+      subst←{
+          0∊⍴⍵:⍵ ⋄
+          '$'∧.=(⊣/,⊢/)(2⌈≢⍵)↑⍵:getEnv 1↓¯1↓⍵ ⋄
+          ⍵}
+      :Select ⊃⎕NC'config'
+      :Case 2
+          :If 9.1∧.={⎕NC⊂,'⍵'}¨config
+              SubstEnv¨config
+          :EndIf
+      :Case 9
+          :For n :In config.⎕NL ¯2
+              :Select ≡v←config⍎n
+              :Case 1
+                  v←subst v
+              :Case 2
+                  v←subst¨v
+              :Else
+                  ∘∘∘
+              :EndSelect
+              ⍎'config.',n,'←v'
+          :EndFor
+      :EndSelect
+    ∇
+
     ∇ config←{element}ReadConfiguration type;serverconfig;file;siteconfig;thing;ind;mask
     ⍝ Attempt to read configuration file
     ⍝ 1) from server root MSRoot
@@ -283,6 +312,7 @@
               config←serverconfig
           :EndIf
       :EndIf
+      :If config≢'' ⋄ SubstEnv config ⋄ :EndIf
     ∇
 
     ∇ Config←ConfigureServer AppRoot;file
@@ -300,7 +330,7 @@
       Config.DefaultExtension←Config Setting'DefaultExtension' 0 '.mipage'
       Config.DefaultPage←Config Setting'DefaultPage' 0 'index.mipage'
       Config.DirectFileSize←{⍵[⍋⍵]}0⌈⌊2↑Config Setting'DirectFileSize'(,1)⍬
-      Config.FIFOMode←Config Setting'FIFOMode' 1 1 ⍝ Conga FIFO mode default to on (1)
+      Config.FIFOMode←Config Setting'FIFOMode' 1 0 ⍝ Conga FIFO mode default to off (0)
       Config.FormatHtml←Config Setting'FormatHtml' 1 0
       Config.Host←Config Setting'Host' 0 'localhost'
       Config.HTTPCacheTime←'m'#.Dates.ParseTime Config Setting'HTTPCacheTime' 0 '0' ⍝ default to off (0)
