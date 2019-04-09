@@ -123,7 +123,7 @@
     ∇
     :endsection
 
-    ∇ r←RunServer arg;Stop;StartTime;⎕TRAP;idletime;wres;rc;obj;evt;data;conx;ts;congaError;ai;i
+    ∇ r←RunServer arg;Stop;StartTime;⎕TRAP;idletime;wres;rc;obj;evt;data;conx;ts;ai;i;congaError
       ⍝ Simple HTTP (Web) Server framework
       ⍝ Assumes Conga available in #.DRC and uses #.HTTPRequest
       ⍝ arg: dummy
@@ -135,7 +135,10 @@
           ⎕TRAP←#.DrA.TrapServer
           #.DrA.NoUser←1+#.DrA.MailRecipient∨.≠' '
       :EndIf ⍝ Trap MiServer Errors. See HandleMSP for Page Errors.
-     
+      :If 0≠#.DRC.⎕NC⊂'Error' ⋄ congaError←#.DRC.Error ⍝ Conga 3.2 moved Error into the library instance
+      :Else ⋄ congaError←#.Conga.Error                 ⍝ Prior to 3.2 Error was in the namespace
+      :EndIf
+           
       onServerStart ⍝ meant to be overridden
      
       idletime←#.Dates.DateToIDN ⎕TS
@@ -143,7 +146,7 @@
       :While ~Stop
           wres←#.DRC.Wait ServerName Config.WaitTimeout ⍝ Wait for WaitTimeout before timing out
           ⍝ wres: (return code) (object name) (command) (data)
-          (rc obj evt data)←4↑wres ⋄ ⍝ai←1 #.Profiler('Got data from DRC.Wait: ',60↑,⍕evt data)ai 
+          (rc obj evt data)←4↑wres ⋄ ai←1 #.Profiler('Got data from DRC.Wait: ',60↑,⍕evt data)ai 
           :Select rc
           :Case 0 ⍝ Good data from RPC.Wait
               :Select evt
@@ -165,7 +168,7 @@
                     ai←1 #.Profiler'ended processing of Connect-Request'ai
      
               :CaseList 'HTTPHeader' 'HTTPTrailer' 'HTTPChunk' 'HTTPBody'
-                ⍝  ai←1 #.Profiler'Updating connection'ai 
+                  ai←1 #.Profiler'Updating connection'ai 
                  :If 0≢conx←1 ConnectionUpdate obj
                  ⍝{}conx{{}⍺ HandleRequest ⍵}&wres ⋄⍝ ai←1 #.Profiler'Done'ai
                 {} conx HandleRequest wres ⋄⍝ ai←1 #.Profiler'Done'ai
@@ -174,7 +177,7 @@
                   :EndIf
      
               :Case 'Timeout'
-                  ⍝1 #.Profiler'Timeout!'ai 
+                  1 #.Profiler'Timeout!'ai 
                    SessionHandler.HouseKeeping ⎕THIS
                   :If 0<Config.IdleTimeout ⍝ if an idle timeout (in seconds) has been specified
                   :AndIf Config.IdleTimeout<86400×-/(ts←#.Dates.DateToIDN ⎕TS)idletime ⍝ has it passed?
@@ -183,7 +186,7 @@
                   :EndIf
      
               :Case 'Closed'
-              ⍝    0 #.Profiler'Closing ',⍕obj  
+                  0 #.Profiler'Closing ',⍕obj  
               ConnectionDelete obj
      
               :Else ⍝ unhandled event
@@ -432,7 +435,7 @@
      
       →0↓⍨conns.Req.Complete ⍝ exit if request is not complete
      
-      ⍝ai←5 #.Profiler'got a complete REQ'ai 
+      ai←5 #.Profiler'got a complete REQ'ai 
        REQ←conns.Req
       REQ.Server←⎕THIS ⍝ Request will also contain reference to the Server
       res←REQ.Response
@@ -475,7 +478,7 @@
               :EndIf
           :EndIf
      
-          ⍝ai←1 #.Profiler'got Page and authenticated'ai 
+          ai←1 #.Profiler'got Page and authenticated'ai 
           cacheMe←encodeMe←0
           :If 200=res.Status
               :If Config.UseContentEncoding
@@ -492,7 +495,7 @@
                               res.HTML←⎕NREAD tn 83 length 0
                               ⎕NUNTIE tn ⍝⋄ ai←5 #.Profiler'Got it'ai
                           :Else
-                              ⍝ai←5 #.Profiler('Failed with error ',(⍕en),' ',⍕⎕EM)ai 
+                              ai←5 #.Profiler('Failed with error ',(⍕en),' ',⍕⎕EM)ai 
                                encodeMe←length←res.(HTML File)←0
                               REC.Fail 500 404[1+⎕EN=22]
                               →SEND
