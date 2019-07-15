@@ -1,0 +1,280 @@
+:Class Parser
+⍝ Parse a string and set modifiers values accordingly. DanB2008 Version 1.31
+⍝ See Vector article in vol 26.1 for rules and logic behind.
+
+⍝ This class has a few more features.
+⍝ To use many of these features call the class with a second string containing
+⍝ 0 or more of 'nargs=n  error=nnn  allownospace  upper  prefix=  modifiers='
+
+⍝ You can specify
+⍝ - the exact number of arguments or                                    (nargs=N)
+⍝ - that the last argument includes all remaining text (LONG) and/or    (nargs=nL)
+⍝ - the minimum and maximum number (SHORT) of arguments                 (nargs=n1-n2  or  nargs=mS)
+⍝ - the lowest generated error can be specified                         (error=nnn)
+⍝ - no space may be allowed before each modifier (/a/la/DOS)            (allownospace)
+⍝ - modifier names can be UPPER or mixcased. UPPER means they can be entered in any case but used UPPER case. (upper)
+⍝ - use a prefix for variable names holding the modifiers value (e.g. /0 can go into variable X0)  (prefix=X)
+⍝ - use " instead of ' (the other quote can then be used in between as in "I'm")
+⍝ - there is a program to provide default values
+⍝ - there is a program to propagate the modifiers
+⍝ - you can specify the minimum number of characters to enter for each modifier
+⍝ - you can specify arguments using +_n=...
+⍝ - you can perform some list or set validation or define a default value for a modifier
+⍝ - you can specify where the modifiers must appear                     (modifiers=first|left|¯1, last|right|1, any|0)
+
+⍝ Example: create a parser accepting 3 modifiers in UPPERCASE: DATE which takes a value, SW2 which does
+⍝ not take a value and SW3 which MAY take one of 'a', 'bc' or 'def'
+⍝   ps←⎕NEW Parser ('/date= /sw2 /sw3[=]a bc def'  'upper')    ⍝ modifiers' variables are uppercase
+⍝   data←ps.Parse 'dsa x /sw3=bc /dat="07/08/28"'   ⍝ will return a namespace containing
+⍝   data.SW2≡0                                      ⍝ 2 strings and set 3 modifiers
+⍝   data.SW3≡'bc'
+⍝   '07/08/28'≡data.Switch 'DATE'                   ⍝ get the modifier value from the table
+⍝   '07/08/28'≡data.DATE                            ⍝ or directly from the NAME
+
+⍝ If only a one time parsing is needed the following will do:
+⍝ data←(⎕new Parser '+sw1 +sw2...').Parse string
+
+⍝ Example: create a parser accepting up to 4 arguments, one modifier accepting vowels only and
+⍝ accept -deletefiles whose minimum number of entered letters must be 'delete':
+⍝   pv←⎕new Parser ('-letter∊aeiou -delete(files)' 'nargs=4S')
+⍝   words←pv.Parse '"I can''t"  ''arg 2''  -let=aaaooo  -delete'  ⍝ only 2 args supplied, minimum 'delete' supplied.
+⍝   7 6≡⊃,/⍴¨words.Arguments
+
+⍝ Example: create a parser accepting 2 to 4 args, one modifier defaulting to 'Paris' and one modifier OK
+⍝   where←⎕new Parser ('$city:Paris $OK' 'nargs=2-4')
+⍝   who←where.Parse 'two arguments $OK' ⋄ 'Paris'≡who.city ⋄ 1≡who.OK
+
+    ⎕io←0 ⋄ ⎕ml←1
+    (LOWER UPPER)←'abcdefghijklmnopqrstuvwxyzàáâãåèéêëòóôõöøùúûäæü' 'ABCDEFGHIJKLMNOPQRSTUVWXYZÀÁÂÃÅÈÉÊËÒÓÔÕÖØÙÚÛÄÆÜ'
+    MAXARGS←15                  ⍝ maximum arguments reported individually
+    upperCase←{~1∊b←(⍴LOWER)>i←LOWER⍳s←⍵:⍵ ⋄ (b/s)←UPPER[b/i] ⋄ s}
+    xCut←{⍺←⍵=1↑⍵ ⋄ 1↓¨⍺⊂⍵}     ⍝ exclusive cut
+    fixCase←{⍵}                 ⍝ assume no fix
+    sqz←{(b⍲1⌽b←' '=s)/s←' ',⍵} ⍝ remove double spaces, add leading ' '
+    if←/⍨
+
+    :field ERROR0←700           ⍝ errors are raised starting at this number
+    :field DELIMITER            ⍝ the character used to delimit modifiers
+    :field FORCESPACE           ⍝ whether a space MUST precede a modifier
+    :field NARGS←⍬              ⍝ how many arguments must be entered (⍬=any number)
+    :field LS←,0                ⍝ does syntax support Long/Short scope?
+    :field PREFIX←''            ⍝ modifiers' prefix
+    :field MODPOS←0             ⍝ 1=right, ¯1=left, 0=any
+
+    ∇ init arg;model;features;b;f;na;mem;cut;n
+    ⍝ Initialize class
+      :Access public
+      :Implements constructor
+      (model features)←2↑⊂⍣(1=≡arg)+arg
+      DELIMITER←⍬⍴model,'+'     ⍝ 1st char of 'model' delimits modifiers.
+      FORCESPACE←' '≠DELIMITER  ⍝ force only if NOT already used as delimiter
+      :If ' '∨.≠features
+          Ps←⎕NEW(⊃⊃⎕CLASS ⎕THIS)' nargs= upper allownospace error= prefix= modifiers=' ⍝ allowed modifiers for the parser itself
+          Pset←Ps.Parse 1↓sqz features
+         ⍝ Find how many arguments this parser accepts.
+         ⍝ This should be a ≥0 number either preceded or followed by the letter L or S (for 'Long/Short' scope)
+          :If 0<⍴NARGS←na←{(0≢⍵)/⍵}Pset.nargs  ⍝ unspecified?
+              f←∨/LS←∨/2 3⍴'llL-sS'∊na ⋄ NARGS←⊃⌽⎕VFI b\na/⍨b←~na∊'lLsS-'
+              na←'^(\d+[sSlL]{0,2}|\d+-\d+[lL]?)$'⎕S'&'⊢na
+             ⍝ We reject if Short/Long and 0 args OR bad #s OR Short and min=max
+              'Invalid number of arguments'⎕SIGNAL 11 if(f∧0∊NARGS)∨(0∊⍴na)∨(LS[1]∧=/2↑NARGS)
+              NARGS←¯2↑{⍵[⍋⍵]}NARGS,NARGS×~LS[1]
+             ⍝ We find where the modifiers must appear (default: anywhere)
+          :EndIf
+          MODPOS←0 ¯1 ¯1 0 1 1 ¯1 0 1[(0 'LEFT' 'FIRST' 'ANY' 'RIGHT' 'LAST' '¯1',,¨'01')⍳⊂upperCase Pset.modifiers]
+          FORCESPACE←~Pset.allownospace
+          fixCase←upperCase⍣Pset.upper                 ⍝ ↓ allow starting errors in range 100-990
+          'ERROR # must be from 100 to 990'⎕SIGNAL 11 if 100 991=.≤ERROR0←700 Pset.Switch'error'
+          'Prefix must be a valid name'⎕SIGNAL 11 if 0>⎕NC'x',⍨PREFIX←(b≢0)/⍕b←Pset.prefix
+          ⎕EX'Ps' ⍝ no need anymore and we don't want the instance to carry it around
+      :EndIf
+     
+    ⍝ Parse the model
+      SwTable←0 3⍴0
+      :If 0<Nswitches←+/cut←(≠\Quotes model)<model∊1↑model
+          SwTable←↑{3↑(1,1↓<\⍵∊'[=∊:')⊂⍵}¨cut xCut model
+          SwTable[;1]←{deQuote(-⊥⍨' '=⍵)↓⍵}¨SwTable[;1]    ⍝ the values
+          SwTable[;0]←f←~∘'()'¨b←fixCase¨SwTable[;0]~¨' '  ⍝ the name
+          SwTable[;2]←1⌈('('∊¨b)×b⍳¨'('                    ⍝ minimum length to enter
+          'modifiers must be unique'⎕SIGNAL 11 if f≢∪f
+          'modifiers must be valid identifiers'⎕SIGNAL 11 if ¯1∊⎕NC PREFIX∘,¨f
+      :AndIf 1∊b←∨⌿mem←''∘⍴¨'∊' '[∊]'∘.⍷f←SwTable[;1] ⋄ (mem f)←b∘/¨mem f
+          'A set must be provided with ∊'⎕SIGNAL 11 if 1∊(1 3+.×mem)=∊⍴¨f
+      :EndIf
+     
+    ⍝ If a number of arguments was specified define some vars for it
+      :If 0<n←MAXARGS⌊⊃⌽NARGS
+          SwTable⍪←('_',¨⍕¨1+⍳n),'=',⍪n⍴2
+      :EndIf
+     
+⍝ Create a namespace based on that model
+⍝ (we could have created a similar class but we would have had to use ⎕NEW instead of ⎕NS ⎕OR)
+      pData←{'#'∊⍕1⊃⎕RSI:#.⎕NS ⍵ ⋄ ⎕SE.⎕NS ⍵}''
+      f←SwTable[;0]
+      :If 0<⍴PREFIX
+          f←((Nswitches>⍳⍴f)/¨⊂PREFIX),¨f ⍝ prepend prefix for modifiers only
+      :EndIf
+      f←f~'Switch' 'Propagate' ⍝ ensure fn names not hidden by modifiers
+      ('Conflicting names:',⍕∪b/f)⎕SIGNAL 11 if 1∊b←(f⍳f)≠⍳⍴f
+      ⍎(0<⍴f)/⍕'pData.(',f,')←0'
+     ⍝ Any defaulted modifier value?
+      :If ∨/b←0≠n←{d×(2×b)+d←':'=(b←'['=⊃⍵)⌷⍵,0}¨f←SwTable[;1]
+          ⍎'pData.(',(⍕b/SwTable[;0]),')←na'⊣na←⊃⍣(1∊⍴na)⊢na←b/n↓¨f
+      :EndIf
+      pData.⎕FX ⎕NR'Switch'    ⍝ do not use a ref to avoid keeping a copy of this ns
+      f←⎕VR'Propagate' ⋄ f[f⍳'$']←DELIMITER
+      pData.⎕FX f              ⍝ mixed letter names minimize clashing with modifiers' names
+      f←pData.(⎕IO ⎕ML)←0 1
+    ∇
+
+⍝ This function is used to return a modifier's value, possibly defaulted, e.g.
+⍝ sw←123 Switch 'abc' ⍝ if 'abc' has not been set 123 is returned.
+⍝ If /abc=789 was specified in the parsed string the value returned will be ,789, not '789'
+
+    ∇ r←{def}Switch s;⎕IO;v
+⍝ Return modifier's value
+      ⎕IO←r←0 ⍝ invalid modifiers are considered not there
+      :Trap 3
+          r←1⊃SwD[SwD[;0]⍳⊂,s;]
+      :EndTrap
+      :If 0≠⎕NC'def'        ⍝ even undefined modifiers can be defaulted
+          :If 0≡r ⋄ r←def   ⍝ use default if not set
+          :ElseIf (1≢r)∧2|⎕DR,def ⍝ num is 11, x3, 645, 1287, 1289
+              r←1⊃v←⎕VFI r  ⍝ make numeric if default is also numeric
+              ('value must be numeric for ',s)⎕SIGNAL 11↓⍨∧/0⊃v ⍝ <if> unavailable
+          :EndIf
+      :EndIf
+    ∇
+
+    ∇ mask←Quotes str;Q;qm;tq;n;i
+    ⍝ Find where text delimited by ' or " starts/ends
+      qm←str∊'''"' ⋄ i←⍳n←⍴Q←qm/str ⍝ work on quotes only
+      tq←<\(i∘.<i)∧Q∘.=Q            ⍝ matching trailing markers
+      mask←n⍴tq⌹(i∘.=i)-0 ¯1↓0,tq   ⍝ all trailing markers
+      mask←qm\mask∨¯1↓1,mask        ⍝ lead & trail markers
+    ∇
+
+    ∇ str←deQuote str;m;lq
+    ⍝ Remove quotes and double quotes
+      →0↓⍨∨/m←str∊'''"'            ⍝ which quote to use
+      lq←m<1↓1,⍨m←str≠str[m⍳1]     ⍝ last quote
+      str←(lq<m∨=\m)/str           ⍝ those to keep
+    ∇
+
+⍝ Parsing function.
+⍝ Spaces are used to delimit arguments.
+⍝ Quotes must be used to include spaces or delimiters in arguments.
+⍝ Modifiers can exist with or without [possibly defaulted] value or be elided.
+⍝ Modifiers not mentioned are refused.
+⍝ Shorter names are accepted but '=' MUST be used to supply values.
+
+    ∇ data←Parse arg;Er;s;t;table;parms;swit;swmat;m;val;vnc;set;req;pat;nov;q;∆;i;p;bad;twv;Q;minlen;np;b;args;argvalues;defined;nda;new;swpos;argpos;sw;rtb
+    ⍝ PARSE modifiers and reset argument. Version 3.2
+      :Access public
+    ⍝ Account for "
+      Er←ERROR0 ⋄ s←-FORCESPACE ⋄ arg←' ',⍕arg
+      'unbalanced quotes'⎕SIGNAL Er if ¯1↑t←≠\Q←Quotes arg ⍝ QUOTED
+      swpos←s⌽t<arg⍷⍨(s-1)↑DELIMITER ⍝ where all modifiers start
+    ⍝ This is where the modifiers' position matters.
+    ⍝ If they are all to the right then we consider the first DELIMITER marks the beginning of the modifiers.
+      argpos←(¯1⌽t)<(' '=¯1⌽arg)>arg∊DELIMITER,' '  ⍝ this is where each non quoted string NOT starting with a DELIMITER starts
+      argpos∧←DELIMITER≠' '                         ⍝ if space is used as delimiter there are no arguments
+    ⍝ If they are all to the left we need to consider the first argument's location
+      :If MODPOS=¯1 ⍝ this will be the 1st (non modifier) string preceded by a space
+          'modifiers must ALL precede arguments'⎕SIGNAL Er+6 if swpos∨.∧∨\argpos
+          :If (⍴argpos)>i←argpos⍳1
+              (swpos arg Q)←(i-1)⌽¨swpos arg Q      ⍝ send the modifiers to the end
+          :EndIf
+          args←~∨\swpos
+      :ElseIf MODPOS=0 ⍝ if they can be anywhere:
+          i←⊂⊂⍋≠\b\{⍵≠¯1↓0,⍵}b/swpos⊣b←swpos∨argpos ⍝ where the modifiers are
+          (swpos arg Q)←i⌷¨swpos arg Q              ⍝ move them to the right
+          args←~∨\swpos
+      :Else ⍝ must be to the right
+          'modifiers must ALL follow arguments'⎕SIGNAL Er+6 if argpos∨.∧t←∨\swpos
+          args←~t
+      :EndIf
+      parms←args/arg ⍝ separate the arguments from the modifiers
+      rtb←{(-⊥⍨' '=⍵)↓⍵}
+      data←{'#'∊⍕⎕THIS:#.⎕NS ⍵ ⋄ ⎕SE.⎕NS ⍵}⎕OR'pData'
+      table[;1]←{':'∊1↑(b←'['∊1↑⍵)↓⍵:(1+2×b)↓⍵ ⋄ 0}¨,0 1↓table←SwTable[;⍳2]  ⍝ default values
+      swit←{s←rtb ⍵ ⋄ n←fixCase rtb s↑⍨e←s⍳'=' ⋄ e≠⍴s:n((1+e)↓s) ⋄ n 1}¨swpos xCut arg
+      swmat←SwTable[;0] ⋄ minlen←SwTable[;2]
+     
+    ⍝ Process each modifier separately according to their position
+      :While 0<⍴swit
+          (sw val)←⊃swit
+          :If 1≠+/b←swmat∊⊂sw ⍝ exact matches
+          :AndIf 1≠t←+/b←((minlen⌈⍴sw)↑¨swmat)∊⊂sw
+              m←((~p)/((×t)⊃'unknown' 'ambiguous'),' modifier: "',sw,'"'),(p←0∊⍴sw)/'modifier names cannot be empty'
+              m ⎕SIGNAL Er+1
+          :EndIf
+          vnc←'['=⊃1⊃(sw p)←,b⌿SwTable[;⍳2] ⍝ '[=]' means 'value not compulsory'
+        ⍝ 'pat' is 1 modifier group complete with assignment and allowed values if present
+          m←∨/(set t)←'∊:'=⊃vnc↓pat←,p ⋄ pat[m/vnc]←'=' ⍝ is the right hand string a set?
+          :If t ⋄ pat←(1+2×vnc)↑pat ⋄ :EndIf        ⍝ remove default value
+        ⍝ We need to check if a value is needed or not allowed
+          req←'='=⊃vnc↓pat ⋄ nov←(0∊⍴val)∨twv←1≡val ⍝ required ⋄ no value set ∨ there w/o value
+          m←1⌽'>no value allowed for modifier <',sw
+          m ⎕SIGNAL(req∨twv)↓Er+2
+          m←1⌽'>value required for modifier <',sw
+          m ⎕SIGNAL(nov∧req>vnc)⍴Er+3
+          table[i←b⍳1;1]←⊂val←deQuote val ⍝ remove extra quotes
+        ⍝ Valid strings are supplied with the modifier: verify them if a value supplied
+          :If twv<0<⍴p←(1+vnc+pat⍳'=')↓pat  ⍝ an arg?
+            ⍝ Spaces are invalid in args
+          :AndIf (set∧∧/val∊p)⍱set<(' '∊val)<∨/(' ',val,' ')⍷' ',p,' '
+              m←'invalid value for modifier <',sw,'> (must be ',(set⊃'ONE of' 'ALL in'),' "',p,'")'
+              m ⎕SIGNAL Er+4
+          :EndIf
+        ⍝ Assign in instance (no need to assign the _n vars, this will be done below)
+          :Trap 2 ⋄ ⍎(i<Nswitches)/'data.',PREFIX,sw,'←val' ⋄ :EndTrap
+          swit←1↓swit
+      :EndWhile
+     
+    ⍝ Find how may arguments remain to be split depending on how many have been defined thru +_n=
+      t←(¯1↑NARGS)-nda←+/defined←0≢¨argvalues←,Nswitches 1↓table ⍝ args left to set
+      np←nda+⍴args←splitParms parms Q,⌊/LS[0]/t ⍝ the total # of arg entered
+     
+    ⍝ Make sure the number of arguments matches the required number
+      :If 0<⍴NARGS ⍝ were there limits?
+      :AndIf ∨/m←¯1 1=×np-NARGS ⋄ t←'too ',(m[0]⊃'many' 'few'),' arguments'
+          t ⎕SIGNAL Er+5 if m∨.>0,LS[0]             ⍝ reject if too few or too many and not Long
+      :EndIf
+    ⍝ Was a number of arguments specified?
+      :If 0<m←¯1↑NARGS ⍝ insert place holder for parameters specified as +_n=
+          ((⍴args)↑(b←~defined)/argvalues)←args             ⍝ insert args at the right place
+          data.{⍎⍕('_',¨⍕¨1+⍳⍴⍵)'←',(1<⍴⍵)↓'⊃⍵'}argvalues   ⍝ create the variables in the ns
+          (,Nswitches 1↓table)←argvalues
+          s←⍴t←(defined/argvalues),1↓(1+m-nda)↑(⊂⍬),args    ⍝ important: ensure prototype is ⊂⍬, not ⊂''
+          args←{⍵↓⍨-⊥⍨⍵≡¨⊂⍬}t[⍋⍒s↑defined]
+      :EndIf
+      data.SwD←table
+      data.Arguments←args
+    ∇
+
+    ∇ parms←splitParms(parms Q n);q;s;t;p;np;qq;q1;txt;bl;d
+    ⍝ Find each token in the argument and use the delimiter to separate them.
+    ⍝ The following allows us to deal with '' properly:
+      bl←parms∊' ' ⋄ txt←≠\q←(⍴parms)↑Q ⋄ qq←txt<q∧1⌽q ⋄ q1←q>¯1⌽txt∨q ⍝ qq=double quote, q1=1st quote
+      d←q1∨bl>txt ⍝ DELIMITERS: spaces NOT in quotes OR 1st quote not in text
+      np←+/s←d>1↓d,0 ⍝ the start of each section
+      p←d∧⌽∨\⌽s\n>⍳np
+    ⍝ COMPRESSOR: quotes but (double quote or quotes used as delim) OR double delim.
+      t←~(q>qq∨p)∨(p∧1⌽p)∨⌽∧\⌽bl ⍝ and trailing spaces
+      q←~p←t/p
+      parms←1↓¨p⊂q\q/t/parms ⍝ turn quote delimiters into spaces for Long below
+    ∇
+
+    ∇ str←{Del}Propagate modifiers;sw;b;v;si
+⍝ Recreate a string of the modifiers in order to be passed to another command
+⍝ e.g. myArgs.Propagate 'VERSION'
+⍝ Invalid modifiers are ignored.
+      str←'' ⋄ si←SwD[;0]∊sw←({⍺←⍵=1↑⍵ ⋄ 1↓¨⍺⊂⍵}' ',modifiers)~⊂''
+      :If 1∊b←0≢¨v←si/SwD[;1]
+          :If 0=⎕NC'Del' ⋄ Del←'$' ⋄ :EndIf
+          str←∊(b/v){' ',Del,⍵,(1≢⍺)/'=',{∨/⍵∊Del,' ''"':Q,((1+⍵=Q)/⍵),Q←'"' ⋄ ⍵}⍕⍺}¨b/si/SwD[;0]
+      :EndIf
+    ∇
+
+:EndClass ⍝ Parser  $Revision: 27253 $

@@ -1,0 +1,13 @@
+﻿DyalogBuild: 0.1
+ID         : MiServer, Version=3
+Description: MiServer workspace for Dyalog v17.0
+Defaults   : ⎕IO←⎕ML←1
+TARGET     : miserver.dws
+
+EXEC  : c←⎕ucs 58  ⍝ colon in EXEC-Statements causes trouble
+⍝EXEC  : ⎕←'SrcDir1=',SrcDir←∊1⎕nparts'workspace'    ⍝ requires to set current dir before executing...not sure this is realistic
+EXEC  : ⎕←'SrcDir2=',SrcDir←'(c',c,'/git/miserver/miserver/workspace')   ⍝ installation-specific, not ideal as well. Can't we refer to the dir the .dyalogbuild-file is stored in?
+
+EXEC  :  ⎕SE.Link.Import # SrcDir
+
+LX    : ⎕←'⍎(⎕IO+0∊⍴2⎕NQ''.'' ''GetEnvironment'' ''AttachDebugger'')⊃''⎕←''''Start not run because AttachDebugger was set'''''' ''Start '''''''''''

@@ -1,0 +1,40 @@
+ NewSite SitePath;⎕ML;⎕IO;fileSep;MSRoot;isWin;isRelPath;nsarg;name;folder;source
+⍝ Create a new basic MiSite (MiServer website)  V1.1
+⍝ SitePath is the MiSite full path and possible switch
+⍝ +start to start the site after creating it
+
+ ⎕IO←⎕ML←1
+
+ fileSep←¯1↑MSRoot←{(1-⌊/'/\'⍳⍨⌽⍵)↓⍵}⎕WSID
+ isWin←('.'⎕WG'APLVersion')[3]≡⊂,'W'
+ isRelPath←{{~fileSep∊⍨(⎕IO+2×isWin∧':'∊⍵)⊃⍵}3↑⍵}
+
+
+ nsarg←(⎕NEW ⎕SE.Parser'+start').Parse SitePath
+ name←⊃nsarg.Arguments
+
+ 'Please provide the pathname for your MiSite as the argument'⎕SIGNAL(' '∧.=name)/11
+
+ folder←(-∨/'/\'∊¯1↑name)↓name
+ 'Please provide an absolute pathname for your MiSite - your MiSites should not be located in the MiServer directory tree'⎕SIGNAL(isRelPath folder)/11
+
+⍝ Load the development environment
+ Load''
+
+⍝ Create the index file...
+ ⎕EX'index'
+ source←(':class index : MiPage')('⍝ This is the index file for the MiSite located in "',folder,'"')
+ source,←'' '∇Compose' ':Access public'
+ source,←'Add _.h2 ''This MiSite is under construction''' 'Add _.h3 ''It will soon be ready'''
+ source,←'∇ ' '' ':endclass'
+ ⎕FIX source
+
+⍝ ...and edit it
+ ⎕ED'index'
+ ⎕SE.SALT.Save'index ',name,'/ -make' ⍝ create the folder if inexistant
+
+ :If nsarg.start
+     Stop
+     Start folder
+     ⎕←'Open your browser and navigate to http://127.0.0.1:8080'
+ :EndIf

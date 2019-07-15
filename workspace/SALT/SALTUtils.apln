@@ -1,0 +1,1975 @@
+:Namespace SALTUtils ⍝ V2.615
+⍝ Utility Functions used by SALT and User Commands code
+⍝ 2016 05 30 DanB: added ⍳ underbar in ⎕Uxxxx list, use ⌶ for Xcase
+⍝ 2016 06 17 DanB: use ⎕SIGNAL 0 to clear ⎕DM
+⍝ 2016 06 20 DanB: Dir excludes hidden files for V15 too
+⍝ 2016 07 21 DanB: use ⎕MAP instead of ⎕NREAD in GetUnicodeFile
+ 
+⍝ This is the code used for User commands and utilities for SALT.
+⍝ It uses undocumented features that may be removed in future versions, do NOT rely on these to be present in the future,
+⍝ they may be decommisioned and changed by other features.
+
+    ⎕io←1 ⋄ ⎕wx←⎕ml←3 ⋄ CR←⎕av[4] ⋄ BS←⎕TC[1] ⋄ ⎕USING←0⍴⊂''
+    SETCOMPILED←SETTS←MONITOR←DEBUG←0 ⋄ MONITORNAME←'#.UCMDMonitor'
+    MODE←8
+   ⍝ MODE is used to: 0=display ]? names all together, 1=show min length, 2=no DOT-names, 3=both,
+   ⍝ 4=fixed column display, 8=by group, 16=add commands #, 32=accept abbreviations, 64=compile code
+
+    WIN←(FS←'.'⎕wg 'aplversion')[3]≡⊂,'W'
+    LINDEL←(~WIN)↓13 10
+    V14←14≤⍎{(2>+\'.'=⍵)/⍵}2⊃FS
+    FS←'/\'[1+WIN]  ⋄ PATHDEL←':;'[1+WIN],'∘'
+    AZaz←' ',⎕A,[0.1]'abcdefghijklmnopqrstuvwxyz' ⍝ used for sorting caseless
+    modeBit←{⍬⍴2 (2*⍵) ⊤MODE}       ⍝ bit 0 is rightmost bit
+    RSI←{(⍵+1)⊃⎕RSI}
+    UCauto←{11::0 ⋄ 1⊣2350⌶⎕null}0  ⍝ UCMD autocomplete available?
+    0(400⌶)3×modeBit 6              ⍝ compile all programs if possible
+
+    NewObjectsFolder←''             ⍝ store new objects here if set (in Settings)
+    LastResultVarName←'⎕SE.Dyalog.LastResult'
+
+    :section SPICE ⍝             ===== SPICE/UCMD related code =====
+
+    UVersion←2.11 ⍝ User Commands version
+
+    (cGroup cLname cName cDesc cParse cObjName cFullName cMinLen)←⍳8 ⍝ column indices for the UCMD list
+
+   ⍝ List of commands that have been renamed from 1.34
+    _←,'samplea'    'ucmdnoparsing'  'sampleb'     'ucmdparsing'       'helpexample'   'ucmdhelp'
+    _,←'cputime'    'runtime'        'efa'         'fileassociations'  'aedit'         'array.edit'
+    _,←'factorsof'  'factors'        'ffind'       'find'              'fncalls'       'calls'
+    _,←'freplace'   'replace'        'fto64'       'tolarge'           'ftttots'       'toquadts'
+    _,←'svnci'      'commit'         'splitfile'   'split'             'wspeek'        'peek'
+    _,←'wsdoc'      'documentation'  'cfcompare'   'file.compare'      'commentalign'  'align'
+    _,←'fncompare'  'fn.compare'     'reordlocals' 'reorderlocals'     'urefresh'      'refresh'
+    _,←'supdate'    'scriptupdate'   'varcompare'  'array.compare'     'wscompare'     'ws.compare'
+    _,←'wslocate'   'locate'         'uclean'      'clean'             'svnco'         'checkout'
+    _,←'uversion'   'version'
+    NewNames←_←((2,⍨.5×⍴_)⍴_ )⍪⊃{('svn',⍵)⍵}¨'add' 'delete' 'diff' 'export' 'import' 'resolve' 'status' 'update'
+
+    ∇ r←UCMDGeneralHELP
+      r←⊃,/CR,¨1↓¨2↓⎕NR'UCMDGeneralHELP'
+⍝                          User Commands - General Help
+⍝
+⍝ Execute command XYZ:                            ]XYZ
+⍝ Capture command XYZ's result in var:            ]var←XYZ
+⍝ Display brief information on cmd or group XYZ:  ]?XYZ  or ]help XYZ
+⍝ Display detailed information on command XYZ:    ]??XYZ
+⍝
+⍝ List all available command names:               ]?
+⍝ Display a summarised list of all commands:      ]?+
+⍝ Display this help message:                      ]??    or ]help
+⍝ List all the commands in folder /A/B/C          ]?/A/B/C
+⍝
+⍝ This version has a few more experimental features:
+⍝
+⍝ ]settings accept 2 new tracking elements: new and compiled
+⍝   new is supposed to allow automatic saving of new objects edited using )ED
+⍝   You will need to have a proper ]settings workdir (not SALT folder) before setting it
+⍝   compiled will track compiled code and recompile it after ]loading it when in effect
+⍝
+⍝ ]boxing can be made permanent by saving the session.
+⍝   It can also create a button to flip ]boxing on and off
+⍝
+⍝ ]lastresult can set the last result produced so it can be recalled
+⍝
+⍝ ]snap accepts a new -clean modifier to remove all tags BEFORE snapping
+    ∇
+
+    noDotNames←{~modeBit 1:⍵ ⋄ ~∨/b←'.'∊¨⍵:⍵ ⋄ ~∨/b←b\m←m∨.∧1<+⌿m←s∘.≡∪s←{⍵↑⍨⍵⍳'.'}¨b/⍵:⍵  ⋄ (∪m/s),(~b)/⍵}
+    showNames ←{modeBit 2:⎕PW ¯2 ⎕SE.Dyalog.Utils.showCol{⍵[AZaz⍋⊃⍵]}⍵ ⋄ </modeBit¨1 3:⍺ byGroup ⍵ ⋄ ⎕PW 8 WidthFit{⍵[AZaz⍋⊃⍵]}⍵}
+    Where←{⍵/⍳⍴⍵}
+
+    ∇ r←list byGroup names;grps;cut;⎕ML;i;width
+     ⍝ Regroup Names (col 1) in list by Group (col 2)
+      (grps names)←↓⍉list[AZaz⍋⍕list[;i];i←cGroup cLname]
+      ⎕ML←1 ⋄ cut←1,2≢/grps ⋄ width←⎕PW-4+⌈/∊⍴¨grps
+      r←0 ¯1↓⍕(uCase¨cut/grps),[1.1]width{0 ¯2↓0 2↓⍕⍪⍺ Fold ⍵}¨cut⊂{((b⍳1)×∨/b←'.'=⍵)↓⍵}¨names
+    ∇
+
+    ∇ com←displayNames(arg list);c;cs;dn;i;L;ll;ord;t;pat;plus;mincase;empty
+    ⍝ List all the cmds available. arg is ]?'s arg, list is the list of all UCMDs, ln is the lowercase version of names
+      mincase←list[;cMinLen]{l←(⍴⍵)⌊|⍺ ⋄ (uCase l↑s),l↓s←⍵}¨⍣(2|MODE)⊢list[;cLname] ⍝ Adjust casing to show min required letters?
+      com←0 ⍝ result if nothing to show
+      plus←'+'∊(1↑arg),¯1↑arg ⋄ empty←0∊⍴arg←arg~plus/'+'
+    ⍝ The list may be reduced using a limited regular expression and the display may be expanded with a +
+      :If pat←(plus>empty)∨∨/'?*'∊arg
+          (mincase list)←(⊂({⍺,'.',⍵}/list[;cLname,⍨('.'∊arg)/cGroup])limRegexFind arg)∘⌷¨mincase list
+      :EndIf
+    ⍝ We display a tabular list if a pattern (or nothing) was requested AND no + specified
+      :If (pat∨empty)∧~plus
+          →0/⍨0∊⍴mincase  ⍝ skip this if none found, the calling program can then try groups
+          ll←CR,∊CR,¨(⎕PW-1)Fold'Type "]?+" for a summary or "]??" for general help or "]?CMD" for info on command CMD.'
+          :If modeBit 3
+          :OrIf 0∊+/PATHDEL∊⍨t←CMDDIR   ⍝ only 1 folder? must be SALT's
+              com←(modeBit 4)/CR,((0⍕1↑⍴list),' commands:'),CR
+              com←ll,⍨com,,CR,list showNames noDotNames⍣(~pat)⊢mincase
+          :Else ⍝ multiple paths, show cmds for each - this is a bit more work:
+              dn←⍒∊L←⍴¨c←∪{⍵⊂⍨~⍵∊PATHDEL}t,'∘',BootPath'spice'
+              com←'' ⍝ we search by path length to cover the case \X,\X\Y
+              t←c[dn]∘{1⍳⍨⍺≡¨L[dn]↑¨⊂⍵}¨list[;cFullName] ⍝ INDEXERR if no matching folder for a cmd
+              :If ∨/t>⍴dn ⍝ then try switching file separator
+                  c←{(FS,FS,⍵)[('/\',⍵)⍳⍵]}¨c
+                  t←c[dn]∘{1⍳⍨⍺≡¨L[dn]↑¨⊂⍵}¨list[;cFullName]
+              :EndIf
+              :For i :In ⍳⍴c{⍺}ord←dn[t]
+                  :If ∨/cs←i=ord
+                      com,←∊CR,¨(⎕PW-1)Fold(0⍕+/cs),' commands in "',(i⊃c),'":',CR
+                      com,←CR,⍨,CR,list showNames{⍵[AZaz⍋⊃⍵]}noDotNames⍣(~pat)⊢cs⌿mincase
+                  :EndIf
+              :EndFor
+              com←com,ll
+          :EndIf
+      :ElseIf plus               ⍝ display 1 line summary per cmd
+          com←arg helpfor list
+      :ElseIf ~isRelPath arg     ⍝ is this a request for help on a path or a specific command?
+          com←arg helpfor 2⊃GetUCMDList arg'*'
+      :EndIf
+    ∇
+
+    ∇ desc←{stem}describeSwitches switches;w;t;s;n;sn;i;details;line;⎕ML
+    ⍝ Describe the switches in layman's terms
+      ⎕ML←1 ⋄ i←+/s←t=1↑t←rlb switches
+      line←(i>0)/i{6::'Accepts modifier',(1<⍺)/'s' ⋄ stem}details←desc←''
+      :For w :In {⍵[⍋↑⍵]}rtb¨s⊂t
+          :If (⍴s←w)≥i←⌊/w⍳'=:∊'             ⍝ does this switch have any extra definition?
+              s[i]←'=' ⋄ n←⍴s←(i+</s⍳'[=')↑s ⍝ is the value optional?
+              :If n<⍴w                       ⍝ is there a validation to perform?
+                  sn←1⌽'''''',1↓s~'[=]'      ⍝ the switch name
+                  :If w[i]='='
+                      details,←∊CR,¨⎕PW Fold' Modifier ',sn,' accepts only values ',↑{⍺,', ',⍵}/{1⌽'""',⍵~'''"'}¨{⎕ML←3 ⋄ b←≠\⍵∊'''"' ⋄ (b∨⍵≠' ')⊂⍵}n↓w
+                  :ElseIf w[i]='∊'
+                      details,←∊CR,¨⎕PW Fold' Modifier ',sn,' accepts values consisting only of characters in the set "',n↓w,'"'
+                  :Else
+                      details,←CR,'The default value of modifier ',sn,' is "',n↓w,'"'
+                  :EndIf
+              :EndIf
+          :EndIf
+          :If ⎕PW<1+(⍴line)+⍴s      ⍝ exceeding ⎕PW?
+              desc,←CR,line ⋄ line←s ⍝ yes, start a new line
+          :Else
+              line,←' ',s           ⍝ no, append to current line
+          :EndIf
+      :EndFor
+      desc,←((0=⍴t)≥CR∊desc)↓CR,t←line,details
+    ∇
+
+    setFlag←{2 ⎕NQ'.' 'SetDFlags'⍵}
+
+⍝ This function splits the number of arguments from the switches definition and reformats nicely
+    splitRule←{' '∧.=R←rlb ⍵:'' ⋄ (1↑⍵)∊⎕d:rlb¨R splitOn1st' ' ⋄ '' R}
+
+⍝ This function finds the position of a command
+    ∇ pos←{exact}findCmdPos name;n;g;rl;glen;b
+      exact←{6::⍵ ⋄ exact}~ASN ⍝ exact match?
+      :If ~'.'∊name
+          →0↑⍨exact∨⍴pos←Where List[;cLname]∊⊂name          ⍝ find an exact match
+          pos←Where((List[;cMinLen]⌈⍴name)↑¨List[;cLname])∊⊂name ⍝ find all matches
+      :Else
+          (g n)←name splitOn1st'.' ⋄ glen←exact×⍴¨List[;cGroup]
+          →0↓⍨⍴pos←Where b←((glen⌈⍴g)↑¨List[;cGroup])∊⊂g    ⍝ group found?
+          rl←b⌿List[;cLname cMinLen]                        ⍝ reduced list
+          →0↑⍨exact∨⍴pos←Where b\rl[;1]∊⊂n                  ⍝ find an exact match
+          pos←Where b\((rl[;2]⌈⍴n)↑¨rl[;1])∊⊂n              ⍝ try on all names
+      :EndIf
+    ∇
+
+    ∇ {R}←{rgn}Spice msg;arg;c;cmd;com;cs;details;DMX;help;helpfor;i;mon;name;names;nargs;reset;rez;rules;spc;switches;syntax;t;stop;swd;CallUserCode;cuc;ASN;dot;List
+    ⍝ Called by the UCMD program. This program can also be used directly with a string as argument.
+      (rgn ASN)←2↑{6::1 ⋄ rgn}0  ⍝ Is the result used (1) or simply displayed (0) ? do we Allow Short Names?
+      ASN←(modeBit 5)∨UCauto<ASN ⍝ In this version we disregard "Allow Short Names" if autocomplete is in effect
+     
+    ⍝ Put a stop before the call if requested
+      cmd↓⍨←¯2×stop←×DEBUG×' -'≡¯2↑cmd←rtb msg
+      :If 0<i←+/∧\'?'=cmd←{(']'=1↑⍵)↓⍵}rlb cmd
+          cmd←cmd[⍳i],' ',rlb i↓cmd ⍝ ensure only one space
+      :EndIf ⍝ accept ?cmd
+      :If (i>1)∧i=¯1+⍴cmd           ⍝ ]?? ≡ ]help
+      :OrIf 'help'≡lCase rtb cmd
+          R←UCMDGeneralHELP ⋄ →0    ⍝ more than 1 "?" alone or 'help': general help
+      :EndIf
+      R←0
+      (cmd arg)←cmd splitOn1st' ' ⋄ cmd←lCase cmd
+      cmd←,(1+'help'≡cmd)⊃cmd'?'    ⍝ accept "help xxx" instead of "?xxx"
+     
+     ⍝ In 13.1 ⎕DMX is introduced and used in some ucmds (e.g. ]DMX). We take a copy here
+      :Trap DMX←0        ⍝ this may fail if ⎕DMX contains unusual objects
+          'DMX'⎕NS ⎕DMX
+      :EndTrap
+     
+⍝ If the UCMDs' location has not been enabled it will fail unless we automatically boot Spice:
+      :If ~reset←0≠⎕NC'⎕SE.Dyalog.SALT.List'
+      :OrIf reset←'ureset'≡cmd      ⍝ allow 'ureset' to force reset
+          CMDDIR←{0∊⎕NC'CMDDIR':⍵ ⋄ CMDDIR}0
+          t←⎕SI∊⍨⊂'GetUCMDList'     ⍝ is this a recursive call thru ⎕FIX?
+      :OrIf t<CMDDIR≢⎕SE.SALT.Settings'cmddir'  ⍝ has the Spice folder changed?
+          (1+reset/stop↑⎕LC)⎕STOP 1⊃⎕SI
+          ResetUCMDcache-reset      ⍝ force reset
+          setAutocomplete List←⎕SE.Dyalog.SALT.List
+          R←(⍕1↑⍴List),' commands reloaded'
+          →reset⍴0
+          R←0
+      :EndIf
+     
+      List←⎕SE.Dyalog.SALT.List
+     
+      helpfor←{0∊⍴⍵:'No files found for "',⍺,'"'
+          c←('Group' 'Name' 'Description',[0.5]¨'=')⍪{⍵[AZaz⍋⍕⍵[;1 2];]}⍵[;cGroup cLname cDesc]
+          c[1+Where 2≡/c[;1];1]←⊂'' ⍝ blank out all but 1st group names
+          '"]??" for general help, "]?CMD" for more specific info on command CMD',⍨CR,⍨,CR,⍨⍕c}
+     
+⍝ One line help
+      :If help←'?'=1↑com←cmd
+          ASN←1 ⍝ short names allowed for help since autocomplete does not work there
+          →0/⍨0≢R←displayNames arg List
+          details←¯1+'?'+.=com
+          com←lCase 1⊃arg splitOn' ' ⍝ the 1st word after '?' is the command to get help on
+         ⍝ Is this a group?
+          :If ~0∊⍴i←{⍵/⍳⍴⍵}List[;cGroup]∊⊂com~'?*'
+              R←helpfor List[i;] ⋄ →0
+          :EndIf
+      :EndIf
+     
+⍝ We need to bring in the command if it is unknown and AUTOmatic search is ON
+      :If ⍬≡i←findCmdPos com    ⍝ look for 1 name; if not found
+      :AndIf ⍱/'*?'∊com         ⍝ and no filter used
+      :AndIf 'auto'≡⎕SE.SALT.Settings'newcmd'
+          ResetUCMDcache 0
+          setAutocomplete List←⎕SE.Dyalog.SALT.List
+          i←findCmdPos com ⍝ try again
+      :EndIf
+     
+⍝ If the command is still not found and help is wanted we look into groups and similar names
+      :If 1≠⍴i
+          :If help∧0∊⍴i
+              t←{⍺,'.',⍵}/List[;cLname,⍨(dot←'.'∊com)/cGroup]
+          :AndIf 0∊⍴i←t limRegexFind com ⍝ look into commands
+          :AndIf ~dot ⍝ group name?
+              i←List[;cGroup]limRegexFind com       ⍝ look into groups
+          :EndIf
+     
+          :If 0∊⍴i ⍝ not found; has it been renamed?
+          :AndIf 0<⍴i←NewNames[;1]{b⍳⍳1=+/b←(⊂⍵)∊⍨(⍴⍵)↑¨⍺}com
+              R←BS,'* Command ',⊃{'"',⍺,'" has been renamed "',⍵,'"'}/,NewNames[i;] ⋄ →0
+          :EndIf
+     
+          :If 1<t←⍴i
+          :OrIf 1<t←⍴i←Where((⍴com)↑¨List[;cGroup])∊⊂com
+              R←BS,'* Invalid user command; to see a list of all valid user commands that start with "',com,'", type ',CR,'      ]?',com,'*'
+              →0
+          :ElseIf 0∊t
+              R←BS,'* Invalid user command; to see a list of all user commands type',CR,'      ]?'
+              →0
+          :EndIf
+      :EndIf
+     
+      :If help ⍝ Special case '?'
+          :If 1<⍴,i
+              R←helpfor List[,i;] ⋄ →0
+          :EndIf
+     
+          :Trap DEBUG↓0
+            ⍝ If parsing rules are given display them here
+              syntax←''
+              :If ''≢rules←splitRule cParse⊃,List[i;]
+                  (nargs switches)←rules
+                  syntax←' Syntax: ',{''≡⍵:⍵ ⋄ a,←' argument',(1<n←2⊃⎕VFI a←⍵~sl←'sSlL')/'s'
+                      l←¯2⌽((1+n=1)⊃'last' 'all'),' arguments merged) ('
+                      a,'.',⍨↑,/(1,∨/2 2⍴sl∊⍵)/'' ' or less'l}nargs
+                  syntax,←CR{(0∊⍴⍵)↓⍺,⍵}describeSwitches switches
+              :EndIf
+              c←cFullName⊃,List[i;] ⋄ cs←⎕NS''             ⍝ only used to define space in it
+              R←BS,spc←⎕SE.SALT.Load'"',c,'" -target=cs'   ⍝ grab the cmd space, define in cs, keep ref to it
+              →0/⍨326≠⎕DR spc
+              name←cName⊃,List[i;] ⋄ cs.Group←cGroup⊃,List[i;]
+     
+              :Trap 0 ⍝ can we put a stop on line 1 of the help fn?
+                  (⍳stop)spc.⎕STOP'Help'
+              :Else
+                  (stop/HelpStop)⎕STOP ⎕IO⊃⎕SI
+              :EndTrap
+     HelpStop: ⍝ Stop here when stop requested for Help with Classes. Now TRACE into the next lines.
+              :Trap 2  ⍝ try the detailed syntax
+                  com←details spc.Help name
+              :Else    ⍝ OK, the "old" way then
+                  com←spc.Help name
+              :EndTrap
+             ⍝ The user may have decided to return a VTV instead of a char string, or maybe a char matrix
+              name←(cGroup⊃,List[i;]),'.',name ⍝ include the group name
+              com←'Command "',name,'".',syntax,{(CR∧.=2↑⍵)↓CR,⍵}{(0∊⍴⍵)∨326≠⎕DR ⍵:,CR,⍵ ⋄ ↑,/CR,¨⍵}com
+              com,←(CR=¯1↑com)↓CR,CR,'Script location: "',c,'"',CR
+              R←com
+          :Else
+              R←BS,'* Unable to produce Help for command "',name,'":',{('⍎'=1↑⍵)↓⍵}⎕IO⊃⎕DM
+          :EndTrap
+          R←⊃∘⎕SE.Dyalog.Utils.layoutText⍣(~rgn)⊢R
+      :Else
+          :Trap DEBUG↓mon←0
+⍝ We need to know the calling space. If we were called by <UCMD> this is in 'THIS'
+              :If t←'⎕SE.UCMD'≡2⊃⎕XSI,0 ⍝ called by ⎕SE.UCMD?
+              :AndIf 9=⎕NC'⎕SE.THIS'
+                  cs←⎕SE.THIS ⍝ use what we know
+              :Else
+                  cs←RSI 1+t                          ⍝ could be a user call
+              :EndIf
+              'c'⎕NS'' ⍝ we need a NAMED ns to get a full pathname
+⍝ If we are debugging we use the object in the ws instead if possible
+              :If DEBUG>0
+              :AndIf 9=cs.⎕NC t←(com←cObjName⊃,List[i;]),'.SALT_Data'
+              :AndIf List[⍬⍴i;cFullName]≡⍬⍴splitName(cs⍎t).SourceFile
+                  spc←cs⍎com ⋄ ⎕←1⌽'"* Debugging ws object "',com
+                  spc.##.THIS←cs ⍝ THIS must be defined for some cmds
+              :Else
+                  R←BS,spc←0 c ⎕SE.SALT.Load t←'"',(cFullName⊃,List[i;]),SALTEXT,'"'
+                  →0/⍨326≠⎕DR spc ⍝ return msg if it failed
+              :EndIf
+              cmd←,spc.List
+              :If 1<+/t←(,¨cmd.Name)∊⊂com←cName⊃,List[i;] ⍝ more than 1 cmd with same name?
+                  t←t∧(lCase¨cmd.Group)∊⊂cGroup⊃,List[i;] ⍝ then use the group
+              :EndIf
+              :If ''≢rules←⌽splitRule cmd[t⍳1].Parse
+⍝ We have to prepare the parser for the number of arguments
+                  (2⊃rules){(0<⍴⍺)/⍵,⍺}←'nargs='
+                  arg←(⎕NEW ⎕SE.Parser rules).Parse arg
+              :EndIf
+     
+              :If mon←com≢'UMonitor'
+              :AndIf mon←(9.1=⎕NC⊂'spc')∧(MONITOR>0)∧0<⍴names←spc.⎕NL-4.1 3.1
+                  (¯1+⍳999)∘spc.⎕MONITOR¨names ⋄ mon←¯1
+              :EndIf
+              c.THIS←cs   ⍝ ensure we have a reference to the calling environment
+              c.RIU←⍬⍴rgn ⍝ and let know if the result is used
+              c.SourceFile←cFullName⊃,List[i;]
+              c.Group←cGroup⊃,List[i;]
+              c.WIN←WIN
+              c.DMX←DMX
+     
+             ⍝ Create a program to call the user's code
+              cuc←⎕FX 1 stop 1/'R←CallUserCode args' '⍝ Program stopped on request; use →⎕LC to resume' 'R←{DEBUG↓85::0 0⍴0⋄E←85⌶⋄x←''spc.Run ⍵''⋄{11::0 ⋄ 0 E ⍵}⍕1:0 E x⋄E x}args'
+     
+             ⍝ Is a stop requested before executing the code?
+              :If stop
+                  :Trap 0 ⍝ can we put a stop on line 1 of the user fn?
+                      1 spc.⎕STOP'Run'
+                  :Else   ⍝ no, must be a fn in a class, let's stop here instead
+                      1 ⎕STOP cuc
+                  :EndTrap
+              :EndIf
+     
+             ⍝ The following statement does the actual call to the user code.
+             ⍝ It runs the <Run> function passing as arguments the command to run and
+             ⍝ either the text that followed the command on the ]command line OR
+             ⍝ a namespace containing the arguments and the switches.
+             ⍝ For example, the command line
+             ⍝   ]mycmd  arg1 a2 -swx  -sw2=abc
+             ⍝ would generate com←'mycmd' and arg←' arg1 a2 -swx  -sw2=abc'
+             ⍝  OR, if the parsing rules are in effect:
+             ⍝ arg←⎕NS '' ⋄ arg.Arguments←'arg1' 'a2' ⋄ arg.swx←1 ⋄ arg.sw2←'abc'
+     
+     
+             ⍝ Run the code, cover non result case.
+             ⍝ Note that this uses a special feature of Dyalog which may not be there in a future release.
+             ⍝ Should you choose to use it you should put it in a cover function in case it is decommissioned.
+     
+              R←CallUserCode com arg
+     
+              :If (0≠mon)∧com≢'UMonitor'
+                  i←(0<+/∘,¨0 1∘↓¨i)/(spc.⎕CR¨names){⍺ ⍵}¨i←spc.⎕MONITOR¨names
+                  ⍎name,'←i',(2=⎕NC name)/' MergeMD ',name←MONITORNAME ⍝ set or add data
+              :EndIf
+          :Else
+              R←BS,'* Command Execution Failed: ',mon{⍺=1:'Cannot monitor classes' ⋄ ('⍎'=1↑⍵)↓⍵}⎕IO⊃⎕DM,⊂'WS FULL'
+              MONITOR∧←mon≠1 ⍝ turn it off to prevent further problems
+          :EndTrap
+      :EndIf
+    ∇
+
+      MergeMD←{0∊⍴ra←⍵:⍺ ⋄ ∧/keep←~merge←⊃∊/(new old)←1⊃¨¨⍺ ⍵:⍵,⍺ ⍝ all new
+          ra[2,⍨¨old⍳merge/new]+←0,¨0 1∘↓¨2⊃¨merge/⍺ ⋄ ra,keep/⍺
+      }
+
+    ∇ setAutocomplete list;ev
+      →V14↓0
+      ev←(uCase¨list[;1]){⍺,'.',⍵}¨list[;2]
+      :Trap 11 ⍝ just in case this Ibeam is not defined
+          {}2350⌶']',¨ev,{⍵/⍨∨/m/⍨1=+⌿m←⍵∘.≡∪⍵}list[;2]
+      :EndTrap
+     
+    ∇
+
+    ∇ str←default VerifyNEstring str;ok
+     ⍝ Verify that the string is not empty
+      ok←{⍱/0 2∊10|⎕DR ⍵:0 ⋄ 1≢≡⍵:0 ⋄ ~0∊⍴⍵}str←default{⍵,(0∊⍴⍵)/⍺}str~' '
+      'Name and Group must be a non empty character string'⎕SIGNAL ok↓11
+     ⍝ This line needed for CC
+    ∇
+
+    ∇ (cmddir list)←{tell}GetUCMDList names;folder;nc;ns;show1;t;b;gn;cn;files
+    ⍝ Retrieve the list of all Spice commands
+      :If show1←326∊⎕DR names
+          folder←1↑(cmddir names)←names
+      :Else
+          folder←ClassFolder∘''¨(cmddir←⎕SE.SALT.Settings'cmddir')splitOn PATHDEL
+      :EndIf
+      t←↑⍪/⎕SE.SALT.List¨'"',¨folder,¨⊂FS,names,'" -rec -raw -full=2'
+      files←∪(0=,⊃⍴¨t[;1])/t[;2]
+      :If ~show1
+          files∪←(BootPath'spice',FS)∘,¨'Spice' 'SaltInSpice' 'NewCmd'  ⍝ always there
+      :EndIf
+      list←⍬
+      :If 0=⎕NC'tell'
+          tell←0
+      :EndIf
+⍝ Spice keeps track of the commands in the Spice folder
+      :For t :In files
+          :Trap DEBUG↓0
+              ns←⎕SE.SALT.Load'"',t,'.dyalog" -noname -nolink'
+              :If 9=⎕NC'ns'
+              :AndIf 3=⌊|ns.⎕NC⊂'List'
+              :AndIf ~0∊⍴nc←ns.List
+                  nc←{⍵⊣⍵.(Name Group)←'' 'NONE'VerifyNEstring¨2↑⍵.(Name Group Desc Parse)←,¨⍵.(Name Group Desc Parse)}¨,nc
+                  nc.ObjName←⊂{⍵↑⍨-⊥⍨'.'≠⍵}⍕ns
+                  nc.FullName←⊂t
+                  nc.Name←~∘'()'¨cn←nc.Name
+                  nc.MinLen←{(b⍳1)×1∊b←'('=⍵}¨cn
+                  list,←nc
+              :EndIf
+          :Else
+              tell{⍺:⎕←⍵}'Error loading a User Command from "',t,'": ',⎕IO⊃⎕DM
+          :EndTrap
+      :EndFor
+      →(⍴list)↓0
+    ⍝ Remove duplicates, if any. Groups are important.
+      list←(b←(⍳⍴t)=t⍳t←{⍺,'.',⍵}/gn←lCase¨⊃list.(Group Name))/list ⋄ t←b/t ⋄ gn←b⌿gn
+    ⍝ At this point all we have is unique group/names. We now try to find the unique names
+      list←gn,⊃list.(Name Desc Parse ObjName FullName MinLen) ⍝ get rid of namespaces
+      list[;8]←list[;8]findMinLen gn
+    ∇
+
+    ∇ ml←ml findMinLen list;i;b;U;grp;nam;nu
+    ⍝ Find the minimum length required to enter a command.
+    ⍝ Start with the unique names
+      U←∨/b/⍨1=+⌿b←nam∘.≡∪nam←list[;2] ⋄ i←1
+      ml←ml-999×0=ml
+      :Repeat
+          b←({∨/U/⍨1=+⌿U←⍵∘.≡∪⍵}i↑¨U/nam)∨i=U/ml
+          (b/U/ml)⌈←-i ⋄ i+←1
+      :Until ∧/b
+     ⍝ This line needed for CC
+    ∇
+
+⍝           THE UCMD fn
+
+    ∇ r←{THIS}UCMD Input;dcl;in;nma;rlb;ur;notQ
+⍝ User Command Processor. The result may be assigned to a global variable.
+⍝ Most of the implementation is in ⎕SE.SALTUtils.Spice; this function only implements
+⍝ "assignment syntax", i.e. ]varname←ucmd   and   ]⎕←ucmd
+     
+      rlb←{(+/∧\' '=⍵)↓⍵} ⋄ →(⍴in←rlb Input)↓0
+     
+      :If 0=⎕NC'THIS' ⋄ THIS←⎕IO⊃⎕RSI ⋄ :EndIf     ⍝ record calling environment
+     
+⍝ ]var←Cmd accepted; see if it makes sense if present. No spaces allowed.
+      notQ←'⎕←'≢nma←(~' '∊nma)/nma←(⌽∨\⌽<\('←'=in)>∨\in∊'''"')/in
+      dcl←'*'∊4⍴⎕STACK                             ⍝ were we at Desk Calculator Level?
+      :If notQ∧(1<⍴nma)>0 2 9∊⍨THIS.⎕NC ¯1↓nma     ⍝ is the assignment legal?
+          ur←'* assignment syntax error' ⋄ ur ⎕SIGNAL dcl↓2 ⋄ ⎕←ur ⋄ →
+      :EndIf
+      →(⍴in←(⍴nma)↓in)↓0                           ⍝ ]v← is the same as ]
+     
+      ur←(dcl,⍨dcl≤notQ×⍴nma)⎕SE.SALTUtils.Spice in
+      {0:: ⋄ ⍎'⍵⎕signal 100'},' '                  ⍝ reset ⎕DM
+      :If (0 2∊⍨10|⎕DR ur)∧1∊⍴⍴ur
+      :AndIf (2↑ur)≡(⎕UCS 8),'*'                   ⍝ error signature
+          ur ⎕SIGNAL dcl↓911 ⋄ ⎕←1↓ur ⋄ →0         ⍝ signal error only if called by a program
+      :EndIf
+     
+      →(1=⍴nma)⍴0                                  ⍝ ]←cmd    discard result
+      :If 0∊⍴nma ⋄ r←ur                            ⍝ no '←'   return result by this fn
+      :ElseIf ~notQ ⋄ {⎕←⌽rlb⌽⍵}¨↓⎕FMT ur          ⍝ ]⎕←      display line by line
+      :Else ⋄ {THIS⍎nma,'⍵'}ur                     ⍝ ]xx←cmd  store result in xx in calling namespace
+      :EndIf
+    ∇
+    :endsection
+
+    :section Boot
+⍝ =========================   Boot   fns   =========================
+
+    ∇ {cd}←BootSpice
+    ⍝ Reset UCMD cache
+      :If ~0∊⍴cd←ResetUCMDcache 1
+          Spice'usetup init'
+      :EndIf
+    ∇
+
+    ∇ {cd}←ResetUCMDcache arg;tell;force;ev;t;uf;fol;tie;set;list;st;cf;fe;doit;problem
+     ⍝ Reset the UCMD cache. tell=0: quiet, <0: force reset
+     ⍝ We now add the necessary elements to make this work (Parser and Utils should be there already)
+      '⎕SE.Dyalog.SALT'⎕NS cd←''
+     ⍝ 2014/4/8   a new procedure is established to reduce startup time
+      fol←0/cf←getEnvir'UCMDCACHEFILE'
+      →0/⍨(⊂cf)∊'skip' 'SKIP'
+      :If WIN
+          ev←' ',⍨'-64'{⍺/⍨∨/⍺∊⍵}1⊃t←'.'⎕WG'aplversion'
+          fol←'C:\Users\',⎕AN,'\Documents\Dyalog APL',ev,({⍵/⍨2>+\'.'=⍵}2⊃t),((80=⎕DR'')/' Unicode'),' Files'
+          fol←FS,⍨{0::⍵ ⋄ 2⊃4070⌶⍬}fol ⍝ is the folder already defined internally?
+      :Else
+         ⍝ Ensure folder is there
+          :If 0∊⍴cf ⍝ create it only if the env var is NOT specified
+              :Trap 2
+                  fol←'/.dyalog',⍨getEnvir'HOME'
+                  3⎕MKDIR fol
+              :Else
+                  fol←'/',⍨,⊃⎕SH'mkdir -p ~/.dyalog && echo ~/.dyalog'
+              :EndTrap
+          :EndIf
+      :EndIf
+      force←arg<0 ⋄ tell←|arg
+      set←{⎕ML←1 ⋄ 1↓¨(⍵∊PATHDEL)⊂⍵}'∘',CMDDIR←⎕SE.SALT.Settings'cmddir'
+     ⍝ Running under root we won't have a HOME env var and no spice folder
+      list←{⎕SE.SALT.List'"',⍵,'" -raw -full=2 -recursive'}¨set
+      uf←cf,(0∊⍴cf)/fol,'UserCommand20.cache'
+      fe←{22::0 ⋄ 1⊣⎕FUNTIE(1 3⍴0 ¯1)⎕FSTAC ⍵ ⎕FCREATE 0}uf  ⍝ create the file if not there
+      doit←1 ⋄ problem←1 ⋄ tie←0
+      :Trap 22 ⍝ the creation may have failed because the folder did not exist
+          tie←uf ⎕FSTIE 0                         ⍝ share tie it
+          {⍵<3:tie ⎕FAPPEND¨⍨⍳3-⍵}2⌷⎕FSIZE tie    ⍝ ensure 2 components
+         ⍝ Compare what we have in the cache file to the UCMDs' folder structure
+          :If ~force
+              doit←list≢⎕FREAD tie,1              ⍝ if they don't agree we'll rebuild the list
+          :EndIf
+          problem←0
+      :EndTrap
+      tell←WIN<tell>problem
+      :If doit
+         ⍝ Rebuild the cache/list
+          ⍞←tell/CR,'Rebuilding user command cache... ' ⋄ st←⎕AI[2]
+          (CMDDIR t)←1 GetUCMDList'*'
+         ⍝ Update the file
+          :If ~problem
+              t list ⎕FREPLACE¨tie,¨2 1
+          :EndIf
+          ⎕SE.Dyalog.SALT.List←t
+          ⍞←tell/'done',((DEBUG>0)/' in ',(⍕⎕AI[2]-st),' msecs'),CR
+      :ElseIf ~problem
+          ⎕SE.Dyalog.SALT.List←⎕FREAD tie 2
+      :ElseIf 0=⎕NC'⎕SE.Dyalog.SALT.List'
+          ⎕SE.Dyalog.SALT.List←0 10⍴0
+      :EndIf
+      ⎕FUNTIE tie
+     
+      cd←CMDDIR ⍝ return this value to caller
+      setAutocomplete ⎕SE.Dyalog.SALT.List
+      :If problem
+          ⍞←CR,⍨CR,'* Unable to rebuild user command cache',(~fe)/': the path of "',uf,'" does not exist'
+      :EndIf
+    ∇
+
+    BootPath←{(p↓⍨-'/\'∊⍨¯1↑p←getEnvir'SALT'),FS,⍵}
+
+    ∇ BootSALT;bl
+⍝ Bring in all necessary code to run SALT if enabled
+      '⎕se.Dyalog'⎕NS''               ⍝ make sure this one is there
+      bl←BootPath''
+      bl BootLib'Dyalog.Utils'
+      bl BootLib'Parser'
+      bl BootLib'UnicodeFile'         ⍝ unused by SALT itself but used by other code
+      bl BootLib'SALTUtils'
+      bl BootLib'SALT'
+      ⎕SE.Dyalog.SEEd←⎕SE.⎕WG'Editor'
+      ⎕SE.Dyalog.SEEd.⎕WX←3           ⍝ use this to store the callbacks
+      ⎕SE.SALTUtils.EditorFix'Start'  ⍝ set callback in the NEWly defined ns
+      ⎕SE.⎕FX ⎕CR'UCMD'               ⍝ define <UCMD> fn
+     
+      ⎕EX'⎕se.Dyalog.SALT.List'       ⍝ ensure UCMDs cache location empty
+     
+     ⍝ We don't initialize the UCMD list if we're starting and this is not a Windows version
+      ⎕SE.SALTUtils.CMDDIR←BootSpice
+      :If ∨/'0nN'∊getEnvir'SALT\AddSALT'
+         ⍝ Ensure editor callback is off if SALT is NOT enabled
+          :Trap 0
+              1 ⎕SE.SALTUtils.EditorFix'End'
+          :EndTrap
+      :EndIf
+     
+⍝ Check for autostart (dyapp= on command line)
+      :If 0≠⍴bl←getEnvir'dyapp'
+          ⎕←'Booting ',bl
+          ⎕SE.SALT.Boot{Q,⍵,Q←1↑'"'''~⍵}bl
+      :EndIf
+      {0:: ⋄ ⎕SIGNAL 0}''       ⍝ reset ⎕DM
+    ∇
+
+    splitOnNL←{(13 GetUnicodeFile ⍵ ) splitOn ⎕ucs 10}
+
+    ∇ loc BootLib target;file;name;t;tgt
+⍝ Bring in a single Unicode file
+      file←loc,'core',(¯1↑loc),target{⍵,⍨(-⊥⍨'.'≠⍺)↑⍺}'.dyalog'
+      t←splitOnNL file
+⍝ The name of the object produced MUST match the target name:
+      (tgt name)←'.'splitLast target
+      tgt←⎕SE⍎tgt,(0∊⍴tgt)/'##'
+      {}÷target≡4↓⍕name←tgt.⎕FIX t
+      name.SALT_Data←⎕SE.⎕NS''
+      name.SALT_Data.(SourceFile LastWriteTime Version)←file'(unavailable)' 0
+    ∇
+    :endsection
+
+    :section Editor
+⍝ =====================   EDITOR fns et al  =========================
+
+    ConfirmEdit←1 ⍝ default, reset by <Settings>
+
+    DF←{(⍵.⎕DF df){⍵}⍕⍵{⍺}df←⍵.⎕DF ⎕NULL}    ⍝ cover non-standard ⎕DF
+
+    ∇ {bypasschk}EditorFix args;df;file;fixed;i;id;name;nc;ns;nss;r;sd;ss;t;target;⍙
+      :Access Shared Private
+    ⍝ Callback fn for the editor
+      :If ~{6::⍵ ⋄ bypasschk}0
+          →0/⍨∨/'0nN'∊getEnvir'SALT\AddSALT' ⍝ has SALT been disabled?
+      :EndIf
+      :If 1≡≡args
+          args←0 args   ⍝ pad to get min 2
+      :EndIf
+     
+      :If DEBUG>1
+          ⎕←{6::⍵ ⋄ (⊂t[2].SourceFile),t←⎕SE.Dyalog.⍙}'No ⍙'
+      :EndIf
+     
+      :Select t←2⊃args
+     
+      :Case 'Fix' ⍝ editor callback: [3] source, [4] ns, [5] name
+⍝ When the editor exits we grab its SALT data for the AfterFix event
+⍝ and we store it in ⎕se.Dyalog along with source ID
+⍝ We can edit something IN a class.
+⍝ In that case the class will be reported as being modified.
+          nss←⍴¨ss←⊂'⍝SALTSource="'
+          (target name)←args[4 5]
+          :If ∨/3 4∊nc←⌊|target.⎕NC⊂name⊣id←(i←DF target),'.',name
+              :If ~0∊⍴t←fnData args[3 5]            ⍝ SALTed fn?
+                  ⎕SE.Dyalog.⍙←id t(target.⎕STOP name)
+                  →0
+              :EndIf
+             ⍝ If it's not SALTed maybe its parent is
+              nc←9 ⋄ name←i ⋄ target←target.##
+          :EndIf
+          :If 2∊nc
+              →0/⍨0∊⍴t←varData⊂target name          ⍝ SALTed var?
+              ⎕SE.Dyalog.⍙←id t 0
+          :ElseIf nc=9   ⍝ did we edit something IN a SALTed class?
+              :If 9=target.⎕NC ns←name,'.SALT_Data' ⍝ NS which has a SALT_Data
+              :AndIf ≡/args[5 6]                    ⍝ same name?
+                  t←target.⎕OR ns                   ⍝ grab a copy
+                  df←⍕target⍎name                   ⍝ and its display form
+                  ⎕SE.Dyalog.⍙←id(⎕NS t)df          ⍝ being careful not to keep the original
+              :ElseIf (⍴t)≥i←(nss↑¨t←{0::⍬ ⋄ ⎕SRC target⍎⍵}name)⍳ss
+                  ⍙←⎕NS''
+                  ⍙.SourceFile←{(¯1+⍵⍳'"')↑⍵}{(⍵⍳'"')↓⍵}i⊃t
+                  ⍙.Version←0
+                  ⍙.LastWriteTime←⍕lastWrTime ⍙.SourceFile
+                  ⍙.GlobalName←''
+                  ⎕SE.Dyalog.⍙←id ⍙ 0
+              :EndIf
+         ⍝ New object. Are we tracking them?
+          :ElseIf ~0∊⍴NewObjectsFolder
+              ⎕SE.Dyalog.⍙←id 0 0     ⍝ new object signature
+          :EndIf
+     
+      :Case 'AfterFix'
+⍝ After an object has been fixed successfully we add the SALT details if any
+⍝ which we stored in ⎕se.Dyalog.⍙
+          target←fixed←df←0
+          :If 2=⎕NC sd←'⎕se.Dyalog.⍙' ⍝ they were kept in this global in this ns
+          :AndIf (,3)≡⍴t←⍎sd          ⍝ we need a specific signature
+          :AndIf ((DF target←4⊃args),'.',5⊃args)≡1⊃(id ⍙ df)←t
+             ⍝ If ⍙ is 0 it's a new object
+              :If 0≡⍙
+                  ⎕←'* New object ',id,': ',⎕SE.SALT.Save id,' ',NewObjectsFolder,'/'
+              :Else
+⍝ If ⍙ contains 'Name', it represents the name of the pgm fixed if it was the case.
+⍝ If there is no such name then a class was fixed. Or it could be new.
+                  :If 0=⍙.⎕NC'Name' ⍝ is it a class in a scripted ns?
+                ⍝ ns in non scripted nss are OK
+                      :If 9=target.⎕NC 5⊃args
+                          target←target⍎5⊃args
+                      :EndIf
+                      target.SALT_Data←target.⎕NS ⎕OR'⍙' ⍝ needed in 12.1
+                  :ElseIf ≢/args[5 6]       ⍝ changed a program name?
+                  :AndIf (target.⎕NC 5⊃args)∊3 4
+                      target.⎕FX remTag target.⎕NR 6⊃args ⋄ →0⊣⎕EX sd ⍝ remove its tag
+                  :EndIf
+                  fixed←Fixed target ⍙
+                  :If 0 2∊⍨10|⎕DR df
+                      {}target.⎕DF df       ⍝ restore ⎕DF if was present
+                  :EndIf
+              :EndIf
+          :EndIf
+          ⎕EX sd ⍝ prevent accidents
+          →L10/⍨fixed∧'⎕SE.SALTUtils'≡⍕target
+     
+      :CaseList 'Start' 'chk'
+     
+     L10: ⍝ It looks as if keeping a link to the editor outside
+     ⍝ of this ns solves problems with callback settings dissapearing
+          :If 0=⎕SE.Dyalog.⎕NC'SEEd'
+              ⎕SE.Dyalog.SEEd←⎕SE.⎕WG'Editor'
+          :EndIf
+          :If t≢'Start'
+              ⎕←⎕SE.Dyalog.SEEd.⎕WG'Event'
+          :EndIf
+          ⎕SE.Dyalog.SEEd.⎕WS'Event'('Fix' 'AfterFix')(⎕IO⊃⎕XSI)
+     
+      :CaseList 'End' 'Stop'
+          ⎕SE.Dyalog.SEEd.⎕WS'Event'('Fix' 'AfterFix')0
+     
+      :EndSelect
+    ∇
+
+    ∇ done←Fixed(ns ⍙);buttons;confirm;ext;fmt;here;isfn;isns;key;last;maxv;mode;n;name;new;nofile;path;prev;r;source;sourcefile;s0;t;tsinfo;upd;version;ync;z
+      :Access Shared Private
+    ⍝ Called after object has been fixed to update the source file
+      nofile←1 ⋄ isfn←done←0 ⋄ z←,⊂'' ⋄ fmt←0
+      :If isns←0∊⍙.⎕NC'Name' ⍝ Class? Namespaces have no 'Name' var
+          source←⎕SRC ns ⋄ name←DF ns
+      :ElseIf isfn←4 3∨.=ns.⎕NC name←⍙.Name
+          source←remTag ns.⎕NR name  ⍝ remove tag line for fns
+      :Else ⍝ it's a variable, hopefully palatable
+          fmt←⍙.Format ⋄ source←name(fmt≡'xml')∆VCR{1=≡⍵:⍎⍵ ⋄ ⊃⍎/⍵}⍙.Pathname
+      :EndIf
+      :Trap 22 ⍝ the file may be gone
+          key←{6::0 ⋄ ⍵.EKey}⍙
+          z←fixTabs key splitOnNL ⍙.SourceFile ⋄ nofile←0
+      :EndTrap
+      :If ('<APLScript>'startsWith⍨1⊃z)∧':Class PageClass'startsWith⍨1⊃source
+          source←z MakeAPLScript source
+      :EndIf
+     
+      :If source≢z ⍝ Any changes?
+      :AndIf (rlb¨source)≢rlb¨z ⍝ we shouldn't have to do this
+     
+⍝ This is an update; there are 2 cases:
+     
+⍝ 1. we are adding a new version: we use the next available number
+⍝  We have to be careful not to add a new version from an outdated version (e.g. we loaded an
+⍝  old ws containing an outdated version). For this we check that the version # is exactly the
+⍝  same as the highest verno. In the case where we actually requested to reload an old version
+⍝  it will be negative to denote that fact (i.e. Load will negate the verno)
+⍝  In the case where a brand new version is added (we edited the very LAST version) the prompt includes
+⍝  an option to overwrite the last version.
+     
+⍝ 2. we are replacing an existing file: we confirm if confirmation not disabled
+⍝  If we attempt to overwrite with an old version we will detect it by comparing the timestamps
+     
+          z←s0←sourcefile←⍙.SourceFile
+          :If new←last←0≠version←maxv←⍙.Version ⍝ case #1
+            ⍝ There should be a version # but just in case...
+              (t n ext)←splitName 2⊃(path t)←FS splitLast sourcefile
+              maxv←⌈/0,path ListVersions t,'.',ext ⍝ find last verno
+              last←version≥maxv ⍝ if it is > it must be because we used RemoveVersions
+              version←1+maxv
+              (s0 sourcefile prev)←(path,FS,t)∘,¨((⊂''),'.',¨⍕¨1 0+maxv),¨⊂'.',ext
+          :EndIf
+     
+         ⍝ We can automate confirmation by setting 'ConfirmEdit' to be 1 (YES)
+         ⍝ The 2nd element of 'ConfirmEdit', is present, is the answer to the following
+         ⍝ 3 questions.
+          :If ~1↑(confirm ync)←2↑ConfirmEdit,1  ⍝ has confirmation been disabled?
+              ync←3⍴ync ⍝ used for answering the next 3 questions automatically
+            ⍝ Confirmation required, prepare the question
+              upd←⊂('Update' 'Create a new'⊃⍨1+new),' source file for "',name,'"?'
+              t←(nofile<new>last)/'NOTE: *** this is NOT the latest version!'
+              t←t,nofile/'NOTE: *** the original file is no longer found!'
+              mode←'overwritten.' 'created.'⊃⍨1+new∨nofile
+              t←t('If you choose YES, file "',sourcefile,'" will be ',mode)''
+              buttons←'Yes' 'No',last/⊂'Cancel'
+              :If last←last>nofile
+                  t,←⊂'If you choose NO, file "',prev,'" will be rewritten'
+                  t,←'' 'If you choose CANCEL, the changes won''t be filed'
+              :Else
+                  t,←⊂'If you choose NO, the changes won''t be filed'
+              :EndIf
+          :OrIf (2+last)>ync←msgBox('You have modified ',⍕name)(upd,t)'Query'buttons
+     
+              :If confirm<×DEBUG
+                  ⎕←'* auto response to "You have modified...":',1↑ync
+              :EndIf
+              :If last∧2∊1↑ync
+                  sourcefile←prev ⋄ version←maxv
+              :EndIf
+     
+            ⍝ Make sure the file is not stale.
+            ⍝ NOTE: we consider the file up to date if the version is > the one on disk
+            ⍝ which may happen after running REMOVEVERSIONS
+              :If (maxv>n)∧0<n←⍙.Version
+                  :If confirm
+                      t←('This is version ',(⍕n),', the latest is ',⍕maxv)('Do you still want to save it as V',(⍕maxv+1),'?')
+                      →0⍴⍨1≠msgBox'*** THIS IS NOT THE MOST RECENT VERSION !!!'t'Warn'
+                  :Else
+                      :If ×DEBUG
+                          ⎕←'* auto response to "This is version X":',t←1↑1↓ync ⋄ →0/⍨t≠1
+                      :EndIf
+                  :EndIf
+            ⍝ File is not new: ensure it hasn't been updated outside
+              :ElseIf ~nofile
+              :AndIf ⍙.LastWriteTime{⍺≢⍵:6<⍴⍺∪⎕D ⋄ 0}t←⍕lastWrTime ⍙.SourceFile   ⍝ not same as we loaded?
+                ⍝ If no timestamp is found the file is probably gone, all we need to do is rewrite (with permission)
+                ⍝ If its folder is also gone we can't do it and we simply tell the user when we fail to write the file.
+                  :If confirm
+                      t←{0∊⍴⍵:'No timestamp found for original file!' ⋄ 'Now dated ',⍵}t
+                      t←⍙.SourceFile''('Was dated ',⍙.LastWriteTime,' when loaded...')(t)'Proceed anyway?'
+                      →0⍴⍨1≠msgBox'Source file timestamp has changed...'t
+                  :Else
+                      :If ×DEBUG⊣t←¯1↑ync
+                          ⎕←'* "Was dated" auto response:',t
+                      :EndIf
+                      →0/⍨t≠1
+                  :EndIf
+              :EndIf
+              tsinfo←⍬
+             ⍝ Insert TS/AN info
+              :If (SETCOMPILED∨SETTS)∧~1∊'/SALT/'⍷uCase{s←'\'=v←⍵ ⋄ (s/v)←'/' ⋄ v}sourcefile
+                  :If isfn
+                      tsinfo←ns getTs,⊂name
+                  :ElseIf isns
+                      tsinfo←ns getTs⍣(~0∊⍴t)+t←ns.⎕NL ¯3.1
+                  :EndIf
+              :EndIf
+              z←mergeTxt('⍝:Pragma Line 1'startsWith⍨1⊃source)↓source,tsinfo
+              :Trap 22
+                  z PutUTF8File(t←sourcefile)key
+                  :If new
+                      z PutUTF8File(t←s0)key
+                  :EndIf
+              :Else
+                  ⎕←'*** Unable to save "',t,'", SALT tag is removed'
+                  ⎕←'*** Use ]SAVE to save the object manually'
+                  :If isfn
+                      ns.⎕FX source
+                  :ElseIf isns
+                      ns.⎕EX'SALT_Data'
+                  :Else
+                      1 varData⊂ns name
+                  :EndIf
+                  →0
+              :EndTrap
+              done←1
+              :If isns
+                  ⍙←ns.SALT_Data ⍝ shorthand
+                  ⍙.LastWriteTime←⍕lastWrTime ⍙.SourceFile←sourcefile ⍝ update Timestamp
+                  ⍙.(Version EKey)←version key
+                  :If DEBUG>1
+                      ⎕←'* New Tag info: ',⍙.(LastWriteTime SourceFile Version EKey)
+                  :EndIf
+              :Else
+                  SetDelta(ns name source,isfn/⊂tsinfo)sourcefile version ⍬ fmt key
+              :EndIf
+          :EndIf
+      :EndIf
+    ∇
+
+    mergeTxt←{11::⍬ ⋄ (-⍴L)↓⊃,/(⊂⍣(1≡≡⍵)+⍵),¨⊂⎕ucs L←LINDEL}
+
+    ∇ r←file MakeAPLScript class;eAS;html;i;m;script
+⍝ Merge PageClass source with apls file contents
+      html←(i←((⍴eAS)↑¨file)⍳eAS←⊂'</APLScript>')↓file ⍝ Extract the non-APLScript part
+      script←1↓(i-1)↑file
+      script←({'<'∊1↑⍵~' '}¨script)/script ⍝ statements beginning with <
+      :If (⍴class)≥i←class⍳⊂'⍝--- APLS Code Begins ---'
+          class←¯2↓i↓class
+          m←class∧.=¨' '
+          class←(+/∧\m)↓(-+/∧\⌽m)↓class
+      :EndIf
+      r←(eAS~¨'/'),script,class,eAS,html
+    ∇
+    :endsection
+
+    :section SALT
+⍝ ===== SALT utilities
+
+    ∇ {rc}←Forget(folder name version keeplast newlast noprompt);dotVer;ext;f;last;list;next;nf;ok;prev;S;stem;t;Ver
+⍝ Forget Backup Versions
+      :Access Shared Private
+      ok←1 ⋄ dotVer←{(0<⍵)/'.',⍕⍵} ⋄ S←{(1=⍴⍺)↓'s',⍵} ⍝ add 's' to plural
+      :If 12<nf←⍴t←list~keeplast/⌈/list←{⍵[⍋⍵]},version
+          t←t[1],(⊂'...'),¯1↑t
+      :EndIf
+      (stem f ext)←splitName name ⋄ Ver←'Version',t S' ',⍕fmtVersion¨t ⋄ ext←'.',ext
+      :If 0<nf
+          t←('Forget Versions of ',name)(('Confirm deletion of ',(⍕nf),' version',list S':')''Ver)'Warn'
+      :AndIf ok←t{⍵:1 ⋄ 1=msgBox ⍺}noprompt
+          :For t :In list
+              fileErase f←(folder,FS,stem,dotVer t),ext
+          :EndFor
+⍝ This should go to the stderr stream
+          ⎕←(⍕nf),' version',list S' deleted.'
+      :EndIf
+      →ok↓0×rc←nf⌈⍣ok-1 ⍝ return -1 if user aborted
+⍝ If a new last version results of the deletions we must make a copy to the non-versioned file
+      :If newlast∨.<version ⍝ then the old current version has been deleted
+      :AndIf keeplast∨newlast>0
+          f←folder,FS,stem,ext ⋄ last←(folder,FS,stem,dotVer newlast+keeplast),ext
+          fileCopy/keeplast⌽last f
+      :EndIf
+    ∇
+
+    ∇ SetDelta(ref name version globalname xml key);ccr;d;ll;lw;nr;prev;t;targ;ts;src
+      :Access Shared Private
+      lw←⍕lastWrTime name
+      :If 3∊⍴ref ⍝ variable
+          (targ ref src)←ref
+          varData(targ ref)name version lw(calcCRC src)xml key
+      :ElseIf 4∊⍴ref ⍝ function
+          (targ ref src ts)←ref
+          nr←,remTag src
+          :If 0.2=1|targ.⎕NC⊂ref ⍝ Dfn?
+              ccr←calcCRC nr
+              :If 1∊⍴nr ⍝ one liners must be split to accomodate the tag
+                  nr←¯1↓¨nr ⋄ ll←'}'
+              :Else
+                  ll←¯1↑nr ⋄ nr←¯1↓nr
+              :EndIf
+          :Else
+              ccr←calcCRC nr ⋄ ll←⍬
+          :EndIf
+          d←'§' ⋄ nr,←⊂'⍝∇⍣',d,name,d,(⍕version),d,lw,d,ccr,d,⍕key
+          d←targ.⎕STOP ref ⋄ ts←targ.⎕AT ref ⋄ ccr←1+1 targ.(400⌶)ref
+          {z←÷⍵}' '∊1↑0⍴targ.⎕FX nr,ll ⍝ refix fn with info
+         ⍝ Restore state
+          d targ.⎕STOP ref ⋄ {0:: ⋄ ts targ.(1159⌶)ref}ccr targ.(400⌶)ref
+      :Else ⍝ must be a ref
+          prev←¯1
+          :If 2∊ref.⎕NC'SALT_Data.Version'
+              prev←ref.SALT_Data.Version
+          :EndIf
+          ref.SALT_Data←ref.⎕NS''
+          ref.SALT_Data.PreviousVersion←prev
+          ref.SALT_Data.SourceFile←name
+          ref.SALT_Data.Version←version
+          ref.SALT_Data.LastWriteTime←lw
+          ref.SALT_Data.GlobalName←globalname
+          ref.SALT_Data.CRC←calcCRC ⎕SRC ref
+          ref.SALT_Data.EKey←key
+      :EndIf
+    ∇
+
+    getTs←{'⍝)('∘,¨,/'!',¨⍵,((⍕¨⍺.⎕AT ⍵)[;4 2]~¨'*'),⍕¨1 ⍺.(400⌶)⍵} ⍝ fnname, user, ⎕TS, compiled
+
+    ∇ space fixTs tags;⎕ML
+    ⍝ Fix the timestamp/user name and compiled on the fns defined in the tags
+    ⍝ Each tag describes the program name, the user name, the ts (⎕TS form) and if compiled
+      →(⍴tags)↓0
+      ⎕ML←1 ⋄ tags←0 1↓↑tags splitOn¨'!' ⋄ tags[;3]←num¨tags[;3] ⋄ tags[;2]~←' '
+      :If ⎕SE.SALTUtils.SETTS
+          :Trap 0
+              {6:: ⋄ DEBUG>0:⎕←⍵}tags[;1]space.(1159⌶)⍨0 1 0 1\tags[;3 2]
+          :EndTrap
+      :EndIf
+      :If ⎕SE.SALTUtils.SETCOMPILED
+          {}(1+(4↑[2]tags)[;4]∊⊂,'1')space.(400⌶)¨tags[;1]
+      :EndIf
+    ∇
+
+    ∇ dstname CopyNs source;b;cls;dref;fn;name;ns;nss;s;scrref;src;val;vars;t
+⍝ Copy contents of a scripted NAMESPACE into a new non scripted one
+⍝ This fn works 2 ways:
+⍝ 1: with a source reference which is to be recreated wo source to the target
+⍝ 2: with a source NAMED which is NOT to be recreated if its display form does not match
+      :If 2=⍴,scrref←source
+          name←⍕scrref←⍎/source
+          →0/⍨name≢(⍕1⊃source),'.',2⊃source ⍝ skip refs
+      :EndIf
+      ⎕EX dstname         ⍝ ensure not there
+      dref←⍎dstname ⎕NS'' ⍝ create new namespace & get its reference
+      dref.(⎕IO ⎕ML ⎕WX ⎕USING ⎕CT)←scrref.(⎕IO ⎕ML ⎕WX ⎕USING ⎕CT) ⍝ ⎕vars
+      vars←scrref{0∊⍴⍵:0 2⍴0 ⋄ ⍵,[1.5]⍺.⍎¨⍵}scrref.⎕NL-2
+      :For name val :In ↓vars
+          ⍎dstname,'.',name,'←val'
+      :EndFor
+      :If ∨/b←dref.{11::1 ⋄ 0∊1↑0⍴⎕FX ⍵}¨src←scrref.(⎕NR¨⎕NL-3 4)
+⍝ OK, some fn didn't fix, probably because it is a ref of some sort
+⍝ If it happens to be made with ∘ there is a chance it was with ','
+⍝ and the result MAY be wrong, we chance it:
+          name←b/scrref.⎕NL-3 4 ⋄ src←b/src
+         ⍝ Find the definition in the source
+          val←⎕SRC scrref
+          :For fn s :InEach name src  ⍝ we can't do them all at once
+              :If 1∊⍴t←('\b',fn,'←[^⋄]*')⎕S'&'⊢val ⍝ only ONE match?
+                  dref⍎1⊃t ⍝ apply verbatim
+              :Else ⍝ take a chance
+                  dref⍎fn,'←',⍕s
+              :EndIf
+          :EndFor
+      :EndIf
+      :For cls :In scrref.⎕NL-vars←9.5 ⍝ Interfaces
+          :If scrref isReal cls
+              dref.⎕FIX ⎕SRC scrref⍎cls
+          :EndIf
+      :EndFor
+⍝ Naive redefinition: if base classes are present this will fail
+      :For cls :In scrref.⎕NL-9.4
+          :If scrref isReal cls
+              dref.⎕FIX ⎕SRC scrref⍎cls
+          :EndIf
+      :EndFor
+      :For ns :In (scrref.⎕NL-9.1)~⊂'SALT_Data' ⍝ Namespaces
+          :If scrref isReal ns
+              (dstname,'.',ns)CopyNs(scrref ns)
+          :EndIf
+      :EndFor
+     ⍝
+    ∇
+    isReal←{(⍕⍺⍎⍵)≡(⍕⍺),'.',⍵} ⍝ does the name match?
+
+    FixWOtag←{orig≡rep←remTag ⊢orig←⍺.⎕NR ⍵:0 ⋄ 11::1 ⋄ 1⊣at (⍺.(1159⌶)) ⍺.⎕fx rep⊣at←⍺.⎕at ⍵}
+
+    ∇ RemFile file;t
+      →(file∧.=' ')/0
+      RemoveVersions({q,⍵,q←'"'⍴⍨</'" '∊⍵}file),' -all -noprompt'
+      t←⊃{⍺,'.',⍵}/1 0 1/splitName file
+      t{22:: ⋄ ⍺ ⎕NERASE ⍺ ⎕NTIE ⍵}0
+    ∇
+
+    ∇ n←{delfiles}cleanWS tgt;lst;sons;nr;s;b;fte
+    ⍝ This fn is used to remove all traces of linking starting at tgt
+      delfiles←{6::0 ⋄ delfiles}0 ⍝ delete associated file(s)?
+      :If n←9∊#.⎕NC'SALT_Var_Data'
+          :If tgt≡#
+            ⍝ If # delete all entries
+              n←⍬⍴⍴fte←#.SALT_Var_Data.VD[;2] ⋄ tgt.⎕EX'SALT_Var_Data'
+          :Else
+            ⍝ If not # and SALT_Var_Data exists remove only appropriate entries
+              nr←⍴s←'.',⍨⍕tgt ⋄ n←+/b←(nr↑¨#.SALT_Var_Data.VD[;1],¨'.')∊⊂s
+              fte←b/#.SALT_Var_Data.VD[;2]
+              #.SALT_Var_Data.VD←(~b)⌿#.SALT_Var_Data.VD
+          :EndIf
+          RemFile¨delfiles/fte
+      :EndIf
+      tgt.⎕EX'SALT_Data'
+      →0↓⍨{0::1 ⋄ 0⊣⎕SRC ⍵}tgt ⍝ skip scripted nss
+     
+    ⍝ Refix all fns without their tags (keep the ⎕AT info)
+      :If 0<⍴lst←tgt.⎕NL-3.1 3.2 4.1 4.2
+          :If ∨/s←0=∊⍴∘⍴¨nr←{fnData⊂⍵}¨tgt.⎕NR¨lst
+              n+←+/tgt FixWOtag¨s/lst
+              RemFile¨delfiles/(s/nr).SourceFile
+          :EndIf
+      :EndIf
+     
+    ⍝ Recursively process any sub space
+      :If 0<⍴lst←tgt.⎕NL-9.1 9.4 9.5
+    ⍝ Only legitimate ones
+      :AndIf ∨/lst←(DF tgt){⍺∘≡¨(⍴⍺)↑¨⍵}DF¨sons←tgt⍎¨lst
+          :If 0<⍴sons←(lst/sons)~tgt
+              n+←+/cleanWS¨sons
+          :EndIf
+      :EndIf ⍝ all nss
+    ∇
+
+    ∇ r←folder ListVersions name
+      :Access Shared Private
+      r←⎕IO⊃folder ListVersionsTS name
+    ⍝ Version 0 equates the highest Vno if present
+      r←r~(0<⌈/r)/0 ⍝ remove it if versioning in effect
+    ∇
+
+    ∇ (r ts)←folder ListVersionsTS name;ext;files;se;u;ok
+      :Access Shared Private
+⍝ Return version numbers and the timestamp of the associated files.
+⍝ 'name' is a name always followed by an extension ONLY (no verno)
+⍝ 0 as verno represents a file with no version #.
+      (name r ext)←splitName lCase⍣WIN⌷name ⍝ lowercase for Windows
+      se←-⍴ext←'.',ext,(0∊⍴ext)/1↓SALTEXT
+      folder←folder,(FS=¯1↑FS,folder)↓FS
+      r←⍬ ⍝ file names with special characters like '(' create problems under Unix
+      :If 0<⍴⎕IO⊃(ts files)←2 4⊃¨⊂'a'Dir folder,name,'*',ext
+        ⍝ There is a possibility that Dir reported too many names:
+          ok←(1⊃¨splitName¨lCase⍣WIN¨files)∊⊂name
+      :AndIf 0<⍴⎕IO⊃(files ts)←ok∘/¨files ts
+          u←(r⍳r)=⍳⍴r←{(('.'∊⍵)>' '∊v)×+/2⊃⎕VFI v←2⊃'.'splitLast ⍵}¨se↓¨files
+          (r ts)←u∘/¨r ts
+      :EndIf
+    ∇
+
+    ∇ path←specialName name;nwb;pfs;rp
+    ⍝ Change any [name] into path
+      :Access Shared Private
+      →0↓⍨'['=1↑path←name
+      path←getEnvir uCase nwb←((rp←name⍳']')↑name)~'[]' ⍝ uCase for Unix
+      ('Folder cannot be resolved: ',name)⎕SIGNAL 922⍴⍨0∊⍴path
+      rp+←FS∧.=(pfs←¯1↑path),1↑rp↓name
+      :If 'dyalog'≡lCase nwb ⍝ 'Dyalog' needs the 'bin' folder removed
+          path↓⍨←¯4×(FS,'bin')≡¯4↑(-pfs=FS)↓path
+      :EndIf
+      path,←rp↓name
+    ∇
+
+    ∇ folder←root ClassFolder folder;and;nocl;rooted;rp;rs;special;stem
+⍝ Produce full path by merging root and folder name
+      :Access Shared Private
+⍝ [xxx] in folder names resolved using GetEnvironment including [DYALOG]
+      folder↓⍨←-FS=¯1↑folder                  ⍝ remove last \
+      →((rp≢FS,'*')∧≠/(FS,':')=rp←2↑folder)⍴0 ⍝ is it already formatted properly?
+      and←{((-FS=¯1↑⍺)↓⍺),(0<⍴⍵)/FS,('/\'∊⍨1↑⍵)↓⍵}
+      special←''
+     
+⍝ Special names treated here
+      :If '['=1↑folder
+          folder←0/root←folder
+      :EndIf
+      :If '['=1↑root
+          special←specialName(rp←root⍳']')↑root
+          folder←special and(rp↓root)and folder
+      :Else
+          folder←root and folder
+      :EndIf
+    ∇
+
+    ∇ (dir path files)←name locateIn folders;dir;empty;files;nfs;path;t
+⍝ Find the 1st occurence of file in list of folders
+⍝ Return the folder it was found in the list provided, the full path and the files found
+      :Access Shared Private
+      empty←' '∧.=name ⍝ this will force return on the first dir in the list
+      :For dir :In folders
+         ⍝ If ClassFolder complains about the folder name we skip it
+          :Trap 922
+              files←'a'Dir path←dir ClassFolder name⊣files←,⊂''
+          :EndTrap
+          :If empty∨0<⍴⎕IO⊃files
+              :If ∨/'?*'∊2⊃t←FS splitLast path
+                  path←1⊃t
+              :EndIf
+              →0
+          :EndIf
+      :EndFor
+      dir path files←'' '',⊂,¨4⍴⊂⍬ ⍝ default not found
+    ∇
+
+    ∇ nr←remTag nr;b
+     ⍝ Remove any tag line in the fn
+      →0↓⍨⍴nr/⍨←b←'⍝∇⍣'∘≢¨3∘↑∘rlb¨nr
+     ⍝ Some versions have a trailing ' }', others a single '}'
+      →0↓⍨(1 0 1≡b)∧(⊢/nr)∊' }'(,'}')
+      →0/⍨'⍝'∊{⍵/⍨=\''''≠⍵}1⊃nr
+     ⍝ Merge Dfn's last line with previous
+      nr←,nr[1],¨'}'
+    ∇
+
+    ∇ ns←fnData arg;b;data;line;ln;lns;⎕ML
+⍝ Fetch data in fn: sourcefile:version:lastwrtime:crc. arg is (source [name])
+      ns←⍴⎕ML←1 ⋄ →0↓⍨ln←⍴lns←1⊃arg←2↑arg,0
+      →0↓⍨1≡≡line←ln⊃lns
+      →0↓⍨ln←ln-'}'=¯1↑line
+      →0↓⍨∨/b←'⍝∇⍣'∘≡∘(3∘↑)∘rlb¨lns            ⍝ do we have such a line?
+      →0↓⍨4≤⍴data←1↓¨('§'=line)⊂line←(b⍳1)⊃lns ⍝ is it kosher?
+      data←5↑data,0 ⍝ previous versions did not have a key
+      data[2]←2⊃⎕VFI 2⊃data ⋄ data[5]{⍺≡⍵:0 ⋄ ⍺}←⊂,'0'
+      ns←⎕NS'' ⋄ ns.(SourceFile Version LastWriteTime CRC EKey Name)←data[⍳5],arg[2]
+    ∇
+
+    ∇ {ns}←{rem}varData arg;b;gd;gns;gv;NI;set
+    ⍝ Fetch or Set data in ws for variable given as arg (1 or 7 elements)
+      NI←7 ⋄ set←1<⍴,arg ⋄ ns←⍬ ⋄ gns←¯3↓gv←'#.SALT_Var_Data.VD'   ⍝ return ⍬ if not found
+      :If 0=⎕NC gv                                                 ⍝ initialize if absent
+          →set↓0
+          ⍎gns,'←#.⎕ns⍬ ⋄',gv,⍕'←0 ',NI,'⍴0'
+      :EndIf
+      gd←⍎gv                                                       ⍝ fetch whole data
+      :If 0<b←NI-2⊃⍴gd
+          gd←0,⍨⍣b⊢gd                                              ⍝ account for pre V2.32 versions
+      :EndIf
+      :If 0=⎕NC'rem'
+          rem←0
+      :EndIf
+      (1↑arg)←⊂{'['∊ns←DF 1⊃⍵:⍵ ⋄ ns,'.',2⊃⍵}1⊃,arg
+      :If ~∨/b←gd[;1]∊⍬⍴arg
+          →(rem≥set)/0
+          b,←~gd⍪←0
+      :EndIf
+      ns←⎕NS'' ⋄ ns.Name←{326∊⎕DR ⍵:2⊃⍵ ⋄ ⍵↑⍨-⊥⍨'.'≠⍵}⎕IO⊃,arg
+      ns.(Pathname SourceFile Version LastWriteTime CRC Format EKey)←,b⌿gd     ⍝ find actual values
+      :If rem
+          gd←(~b)⌿gd
+      :EndIf
+      :If set
+          gd[b⍳1;]←arg   ⍝ NI elements
+      :EndIf
+      :If rem∨set
+          ⍎gv,'←gd'                                     ⍝ reset globally
+      :EndIf
+    ∇
+
+    ∇ r←name ∆VCR object;xml ⍝ create a visual char represention of a variable
+      xml←0
+      :If 2≡|≡name
+          (name xml)←name
+      :EndIf
+      :If xml
+          r←'⌷',name,'←',(⎕UCS LINDEL)⎕SE.Dyalog.Utils.toXML object
+      :Else
+          r←'⌷',name,'←',⎕SE.Dyalog.Utils.repObj object
+      :EndIf
+    ∇
+
+    valWithRef←{16::1 ⋄ 1∊{9∊⎕NC'⍵':1 ⋄ ≡⍵}¨∊⍵} ⍝ does this value contain a ref or ⎕OR?
+
+    ∇ crc←calcCRC vtv;DH;n;⎕IO;⎕ML
+    ⍝ Compute a CRC from a list of text vectors
+      n←⍬⍴⍴DH←⊃,/LU ⋄ ⎕IO←⎕ML←1
+      crc←DH[1+n⊥⍣¯1⊢(⍳⍴crc)+.×crc←∊(⎕UCS¨vtv),¨13]
+    ∇
+
+    SALTEXT←'.dyalog' ⍝ DOT MUST be part of it
+
+    ∇ (stem ver ext)←{def}splitName name;d;n
+    ⍝ Split filename into constituent parts
+      ⍎(0=⎕NC'def')/'def←1' ⍝ do we assume a default?
+      ext←def/1↓SALTEXT ⋄ ver←0⍴stem←name
+      →0⍴⍨∧/d←(name≠'.')∨d≠¯1↑d←+\name∊'/\' ⍝ any dots?
+      stem←name↓⍨n←-1+⍴ext←(-⊥⍨d)↑name ⋄ n←-⊥⍨n↓d
+      →0↓⍨n{(⍺>-⍴⍵)∧(' '∊v)<(,1)≡⎕IO⊃⎕VFI v←⍺↑⍵}stem
+      stem←stem↓⍨-1+⍴ver←n↑stem
+    ∇
+
+    ∇ name←remExt name;d ⍝ remove whatever extension after the last DOT (.)
+      →0↓⍨∨/d←(name='.')∧⌽∧\~⌽name∊'/\'
+      name↓⍨←-1+⊥⍨~d
+    ∇
+
+⍝ Add official SALT extension if none already there
+    addExt←{⍺←SALTEXT ⋄ ∨/(⍵='.')∧⌽∧\~⌽⍵∊'/\':⍵ ⋄ ⍵,'.',('.'=1↑⍺)↓⍺}
+
+    remVerno←{(f v)←'.' splitLast ⍵ ⋄ ∧/(×⍴v),v∊⎕d:f ⋄ ⍵}
+
+    ∇ {(nam val xml)}←la fixVar src;drop;l1;⍙⍙⍙0;⎕ML ⍝ fix the source of a variable in the target space
+    ⍝ Fix a variable. la is TARGET,  VALUE only, name, protected
+      :If 0∊⍴nam←(3⊃la)~' '
+          nam←{1↓¯1↓⍵[⍳⍵⍳'←']}⎕IO⊃1/src
+      :EndIf
+      ⎕ML←1 ⋄ drop←2+⍴nam ⋄ l1←2⌊⍴src
+    ⍝ Find the format:
+      :If xml←'<'∊1↑(drop×l1=1)↓l1⊃,src
+          ⍙⍙⍙0←drop∘{⎕SE.Dyalog.Utils.fromXML ⍺↓∊⍵}
+      :Else
+    ⍝ Define a fn to recreate the variable
+          l1←⎕FX(⊂nam,'←⍙⍙⍙0 S;_'),(1<⍴src)↓(1↑⍨⍴src)↓¨src ⍝ remove first line if more than one
+          'Unable to recreate variable (too big)'⎕SIGNAL 911 if l1≢'⍙⍙⍙0'
+      :EndIf
+      :Trap 0
+          :If ~la[2]
+              :If la[4]∧×la[1].⎕NC nam
+                  val←'** "',nam,'" is already defined'
+              :Else
+                  val←nam ⋄ nam(la[1].{⍎⍺,'←⍵'})⍙⍙⍙0 src
+              :EndIf
+          :Else
+              val←⍙⍙⍙0 src
+          :EndIf
+      :Else
+          val←'*** Unable to define variable',(1⌽'" "',nam),': ',⎕IO⊃⎕DM
+      :EndTrap
+    ∇
+
+    ∇ r←fmtVersion v;ab ⍝ arg can be a simple number, or a string
+      :Access Shared Private
+      ab←{'[',⍵,']'}  ⍝ neg numbers don't get decorators
+      r←{3=10|⎕DR ⍵:ab⍣(0<⍬⍴⍵)⍕|⍵ ⋄ (0<⍴,⍵)/ab ⍵}v
+    ∇
+
+    ∇ r←fmtDate v
+      :Access Shared Private
+      r←0 19⍴'' ⋄ →0⍴⍨0∊⍴v
+      r←v ⋄ →0⍴⍨isChar v ⍝ empty v is char: skip
+      r←'I4,2(</>,ZI2),I3,2(<:>,ZI2)'⎕FMT⊃,6↑¨↓v
+    ∇
+
+    ∇ r←lastWrTime w ⍝ Last Write Time for file
+      :Access Shared Private
+      r←2⊃'a'Dir w
+    ∇
+
+    ∇ {r}←CC list;all;b ⍝ Code Coverage. list is the fns to set
+     ⍝ or 1 to initialize all or 0 (stop & clear) or -1 (stop)
+      :Access public shared
+      :Trap 6
+          {}CodeCov
+      :Else
+          ⎕SE.SALT.Load'tools\code\codecov'
+      :EndTrap
+      all←⎕NL-3.1 4.1
+      :If 1∊b←¯1 0∊list
+          r←CodeCov.CC CCdata,{(⎕MONITOR ⍵)[;2]}¨CCdata[;1]
+          →b[1]/0 ⍝ do not reset numbers if ¯1
+          →0,⍬∘⎕MONITOR¨all
+      :ElseIf list≡1
+          list←all~'CC' 'UCMD'
+      :EndIf
+      r←CCdata←''CodeCov.CCinit⍨⎕CR¨⊂⍣(2>≡list)⊢list
+      (¯1+⍳999)∘⎕MONITOR¨list ⍝ we can't do this inside CCinit
+    ∇
+    :endsection
+
+    :section Parser
+⍝ ===== Parsing related fns
+
+    ∇ parms←{patn}∆parse arg;narg;p;⍙
+⍝ In this version we make use of the Parser in ⎕SE.
+⍝ arg is argument, number of expected args (default any number)
+      narg←''
+      :If 2∊|≡arg
+          (arg narg)←arg
+      :EndIf
+      narg←'upper prefix=⍙',(0<⍴narg)/' nargs=',narg←,⍕narg
+      p←⎕NEW ⎕SE.Parser(patn narg)
+      parms←p.Parse arg
+      ⍙←1⌽')(',⍕'⍙'parms.⎕NL-2 ⍝ all ⍙ names
+      ⍎⍙,'←parms.',⍙ ⍝ assign ⍙ names in current namespace
+      parms←parms.Arguments
+    ∇
+
+    ∇ r←r ∆default value
+⍝ Default CHARACTER STRING r BY value IF IT ≡0
+      :Access Shared Private
+      →(r≡1)⍴0 ⍝ also a valid value
+      →(r≡0)↓mod
+      r←value ⋄ →0
+      ⍝ r IS not SCALAR 0 - ⍎ IF value IS NUMERIC
+     mod:→(' '=1↑0⍴value)/0
+      r←2⊃⎕VFI{b\⍵/⍨b←','≠⍵}r ⍝ accept , between values
+    ∇
+
+    ∇ str←∆propagate switches;b;sw;v
+⍝ This fn will recreate a string of the switches in order to be passed on another cmd
+⍝ e.g. ⎕SE.SALT.Cmd myarg,∆propagate 'VERSION'
+      str←''
+      :If 1∊b←0≢¨v←⍎¨sw←'⍙',¨switches splitOn' '
+          str←∊(b/v){' -',1↓⍵,(1≢⍺)/'=',⍕⍺}¨b/sw
+      :EndIf
+    ∇
+    :endsection
+
+    :section Utils
+⍝ ===== Misc Utilities
+
+⍝ String Index with minimal length: 2='aa' 'bb' strIndex ⊂,'b'
+    strIndex←{∨/b←⍺∊⍵:b⍳1 ⋄ (1=+/b)×1⍳⍨b←((⍴s)↑¨⍺)∊⊂s←,1⊃,⍵}
+
+    ∇ r←{b}rlb w            ⍝ rem leading blanks
+      :Access Shared Private
+      :If 0=⎕NC'b'
+          b←' '
+      :EndIf
+      r←(+/∧\w∊b)↓w
+    ∇
+
+    ∇ r←{b}rtb w            ⍝ rem trailing blanks
+      :Access Shared Private
+      :If 0=⎕NC'b'
+          b←' '
+      :EndIf
+      r←(-⊥⍨w∊b)↓w
+    ∇
+
+    ∇ r←isChar obj
+      :Access Shared Private
+      r←0 2∊⍨10|⎕DR,obj
+    ∇
+
+    ∇ pos←list limRegexFind pattern;pat;from;to;t
+    ⍝ Find elements in a list matching a limited regular expression
+      :Trap 11
+          from←'\.' '\*' '\?','\',¨t←'()[]{}' ⋄ to←'\\.' '.*' '.','\\'∘,¨t
+          pat←'^','$',⍨from ⎕R to{⍵↓⍨'+'∊1↑⍵}pattern~' ' ⍝ turn into full regex
+          pos←⎕IO+∪pat ⎕S 2⊢list
+      :Else
+          'Bad pattern'⎕SIGNAL 902
+      :EndTrap
+    ∇
+
+    ∇ lu←LU
+      :Access Shared Private
+      lu←'abcdefghijklmnopqrstuvwxyzàáâãåèéêëòóôõöøùúûäæü' 'ABCDEFGHIJKLMNOPQRSTUVWXYZÀÁÂÃÅÈÉÊËÒÓÔÕÖØÙÚÛÄÆÜ'
+    ∇
+
+    ∇ s←lCase s;b;i;l;n;u;⎕IO
+      :Access Shared Private
+      :Trap 11
+          s←819⌶s
+      :Else
+          n←⍴⎕IO⊃(l u)←LU
+          →(∨/b←n>i←u⍳s)↓⎕IO←0
+          (b/s)←l[b/i]
+      :EndTrap
+    ∇
+
+    ∇ s←uCase s;b;i;l;n;u;⎕IO
+      :Access Shared Private
+      :Trap 11
+          s←1(819⌶)s
+      :Else
+          n←⍴⎕IO⊃(l u)←LU
+          →(∨/b←n>i←l⍳s)↓⎕IO←0
+          (b/s)←u[b/i]
+      :EndTrap
+    ∇
+
+    ∇ r←msgBox arg;ans;Btns;Caption;choices;evt;hint;Mode;msgbox;N;No;parms;t;Text;Warn
+    ⍝ Return 1, 2 or 3 for buttons pressed
+      :Access Shared Private
+      (Caption Text Mode Btns)←arg,(⍴arg)↓0 0 'Warn',('Yes' 'No')(⊂'OK')[Warn←1+arg[3⌊⍴arg]∊'Info' 'Msg']
+      :Trap 0 ⍝ revert to ⍞ if GUI impossible
+          {x←÷~3501⌶⍬}'is Ride connected?' ⍝ then no GUI
+          'msgbox'⎕WC'msgBox'Caption Text Mode Btns('Event'(evt←61 62 63)1)
+          r←4|evt⍳2⊃⎕DQ'msgbox'
+      :Else
+          (N No)←Warn⊃¨('nN' 'oO')('N (No)' 'O (OK)')
+          choices←'yY',N,(t←3∊⍴Btns)/'cC' ⋄ hint←' Y/',1↓N,(t/'/C'),'? '
+          ⎕←((⍴Text),⍳1≠≡,Text)⍴Text
+          :While ~1∊ans←choices={⍞←⍵ ⋄ 1↑(⍴,⍵)↓⍞}⍕hint
+              ⎕←'** Please answer by Y (Yes) or ',No,t/' or C (Cancel)'
+          :EndWhile
+          r←(∨/3 2⍴ans)⍳1
+      :EndTrap
+    ∇
+
+    ∇ last←str afterLast chars
+      :Access Shared Private
+      last←(-⊥⍨~str∊chars)↑str ⍝ string after last char(s)
+    ∇
+
+    ∇ r←str splitOn1st chars;p;⎕IO
+    ⍝ Split on 1st occurrence of any chars in str
+      :Access Shared Private
+      ⎕IO←0 ⋄ p←⌊/(,str)⍳chars ⋄ r←(p↑str)((1+p)↓str)
+    ∇
+
+    ∇ yes←string startsWith subs
+      :Access Shared Private
+      yes←subs≡(⍴subs)↑string
+    ∇
+
+    ∇ strs←str splitOn char;⎕ML
+      :Access Shared Private
+      ⎕ML←1 ⍝ char may be multiple
+      strs←1↓¨(strs∊char)⊂strs←(1↑char),str
+    ∇
+
+    ∇ r←a splitLast w;p ⍝ Split on last occurrence of a in w
+      :Access Shared Private
+    ⍝ Assume in first pos if not there
+      p←-⌊/(⌽,w)⍳a ⋄ r←(p↓w)((1+p)↑w)
+    ∇
+
+    ∇ name←name trimAt char;⎕IO
+    ⍝ Truncates a character vector at the char delimiting byte.
+      :Access Shared Private
+      ⎕IO←0 ⋄ name↑⍨←name⍳char
+    ∇
+
+    ∇ r←isHelp string
+      :Access Shared Private
+      r←(string~' ')≡,'?'
+    ∇
+
+    ∇ r←num r        ⍝ only use ⎕VFI if character
+      :Access Shared Private
+      :If isChar r
+          ((r='-')/r)←'¯' ⋄ r←2⊃⎕VFI r
+      :EndIf
+    ∇
+
+    ∇ r←condEncl arg ⍝ conditional enclose
+      :Access Shared Private
+      r←⊂⍣(326≠⎕DR,arg)⌷arg
+    ∇
+
+    ∇ _nam Default _val
+      :Access Shared Private
+      ⍎(0=⎕NC _nam)/_nam,'←_val'
+    ∇
+
+    fixTabs←(⎕ucs 9)∘{∧/b←⍵≠⍺:⍵ ⋄ (b-4×~b)\b/⍵}¨ ⍝ Change Tabs into N spaces
+
+    ⍝ "BlackJack" Partitionning: cut so +/¨⍴⍵ords is max ⍺ in each partition - works also with lines of text
+      Fold←{s←1≡≡⍵ ⋄ l←s{⍺:¯2-/0,b/⍳⍴b←1,⍨' '=⍵ ⋄ 2+∊⍴¨⍵}⍵
+          cut←(a↑1)⌹((2⍴a)⍴(1+a←⍴l)↑1)-<⍀b∘.>⍺+¯1↓0,b←+\l
+          cut←{¯1↓∊l↑¨⍵}⍣s+cut
+          ⎕ML←1 ⋄ cut⊂⍵}
+
+    ∇ r←{options}WidthFit text;blk;n;pw;sh;sp;⎕IO;⎕ML ⍝ fit a list ⎕PW wide
+      :Access Shared Private
+      ⍎(0=⎕NC'options')/'options←⍬' ⋄ (pw blk sp)←options,(⍴,options)↓⎕PW,4 1 ⋄ pw←pw-sp
+      ⎕ML←⎕IO←1 ⋄ sh←⊃,/⍴¨,¨text
+      sh←⊃,/⍴¨text←(blk×⌈blk÷⍨sh+sp)↑¨text ⍝ adjust each word's size
+      r←0⍴⊂''
+      :While 0<⍴text
+          r←r,,/(n←+/pw≥+\sh)↑text ⋄ (text sh)←n↓¨text sh
+      :EndWhile
+      r←↑r
+    ∇
+
+    :endsection
+
+    :section OS
+⍝ =====  Directory functions
+
+    ∇ r←isDir w
+      :Access Shared Private
+      r←1∊⎕IO⊃'a'Dir w
+    ∇
+
+    ∇ r←isFile w
+      :Access Shared Private
+      r←0∊⎕IO⊃'a'Dir w ⍝ assume max 1 result only
+    ∇
+
+    fixBRname←('\[[^][',PATHDEL,']+\]')⎕R{specialName ⍵.Match}
+
+    ∇ s←{dropLastFS}fixFsep w;i;ws;cd;path;om;WSsurr;sl;fs
+      :Access Shared Private
+    ⍝ Validate and Replace / or \ by proper OS file delimiter
+      fs←(1+∨/'://'⍷w)⊃FS'/'        ⍝ remains / on Win if web protocol
+      i←i/⍳⍴i←'/\'∊⍨s←w ⋄ s[i]←fs   ⍝ fix Folder separator
+      ⎕SIGNAL 22⍴⍨WIN∧':\'>.=1↓3↑s  ⍝ cannot be relative path if drive specified
+      sl←⍴WSsurr←'[ws]'
+      :If om←(1↑s)≡,'⍵'             ⍝ turn ⍵ or ⍵/ into current workspace path
+      :OrIf WSsurr≡sl↑s
+          i+←fs=1↑s↓⍨i←(sl,1)[1+om]
+          s←('⍵',fs),i↓s
+          :If 'CLEAR WS'≡ws←⎕WSID   ⍝ if in clear ws, use current directory
+              s[⎕IO]←'.'
+          :ElseIf isRelPath ws      ⍝ if a ⎕WSID is a Windows relative path
+              s←'.',fs,i,(0∊⍴i←pathOf ws)↓fs,2↓s
+          :Else
+              s←(pathOf ws),1↓s,(1=⍴s)/fs
+          :EndIf
+      :EndIf
+      :If cd←(2↑s,fs)≡'.',fs        ⍝ turn ./ into same path as current directory
+      :OrIf (3↑s,fs)≡'..',fs
+          path←cd{⍺:⍵ ⋄ (-1+⊥⍨~⍵∊'/\')↓⍵}(-(¯1↑i)∊'/\')↓i←CD''
+          s←path,(1+~cd)↓s,(1=⍴s)/fs
+      :EndIf
+      :If 0=⎕NC'dropLastFS'
+      :OrIf dropLastFS
+          s↓⍨←-fs=¯1↑s
+      :EndIf
+    ∇
+
+    ∇ b←isRelPath path;s
+      :Access Shared Private
+    ⍝ A relative path is one not starting with / under Unix
+    ⍝ or \ or [X:]\ under windows, taking into account URLs like http://
+      →0↓⍨b←~1∊↑,/'://' ':\\'⍷¨⊂path
+      b←~'/\'∊⍨(⎕IO+2×WIN∧':'∊s)⊃s←3↑path
+    ∇
+
+    ∇ r←pathOf filename
+      :Access Shared Private
+      :Trap 0
+          r←¯1↓1⊃⎕NPARTS filename
+          ((r∊'/\')/r)←FS
+      :Else
+          r←{(-1+⊥⍨~⍵∊'/\')↓⍵}filename
+      :EndTrap
+    ∇
+
+    ∇ {r}←makeDir path;D
+      :Access Shared Private
+    ⍝ Create a new directory, ignoring messages if any
+      →(⍴r←fixFsep path)↓0
+      :Trap 0
+          r←3⎕MKDIR r
+      :Else
+          r←⎕SH'mkdir ',((~WIN)/'-p '),D,r,D←WIN/'"'
+      :EndTrap
+    ∇
+
+    ∇ {r}←remDir path
+      :Access Shared Private
+    ⍝ Remove a directory, ignoring messages if any
+      →(⍴r←fixFsep path)↓0
+      :If WIN
+          r←⎕CMD'rd /Q /S "',r,'"'
+      :Else
+          r←⎕SH'rm -fr ',r
+      :EndIf
+     
+    ∇
+
+    ∇ {old}←CD new;get;set;size;t                             ⍝ Change directory.
+      :Trap 0
+          old←¯1↓1⊃1⎕NPARTS  ''                                ⍝ try new fn first
+          old[t/⍳⍴t←old∊WIN/'/']←'\'
+          →(⍴new)↓0
+      :EndTrap
+      :If ~WIN
+          old←,⊃⎕SH'pwd' ⍝ ignore set for the nonce
+      :Else
+          t←'A*'[1+80=⎕DR'']
+          'get'⎕NA'U Kernel32|GetCurrentDirectory',t,' U >0T' ⍝ Associate Get function.
+          'set'⎕NA'U Kernel32|SetCurrentDirectory',t,' <0T'   ⍝     "     Set    "
+          (size old)←get 260 260                              ⍝ Get current directory.
+          :If ×⍴,new                                          ⍝ If target directory.
+              ⎕SIGNAL(set⊂new)↓11                             ⍝ Domain error if fails.
+          :EndIf                                                ⍝ Old dir is shy rslt.
+      :EndIf
+    ∇
+
+    ∇ {r}←a fileCopy w
+      :Access Shared Private
+      (a w)←{q,f,q←'"'/⍨WIN>'"'∊f←fixFsep ⍵}¨a w
+      r←⎕SH((⎕IO+WIN)⊃'cp ' 'copy /y '),a,' ',w
+    ∇
+
+    ∇ {r}←fileErase w;q
+      :Access Shared Private
+      :Trap 0
+          r←1⎕NDELETE fixFsep w
+      :Else
+          r←⎕SH((⎕IO+WIN)⊃'rm ' 'erase '),q,(fixFsep w),q←('"'∊w)↓'"'
+      :EndTrap
+    ∇
+
+    ∇ files←{parms}Dir path;dfa;switches;⎕IO;viz
+⍝ List directory using DOS DIR command
+⍝ parms may be any of
+⍝ dD: list dirs only
+⍝ fF: list files only
+⍝ aA: list all data (timestamp, size, name)
+      :Access Shared Private
+      'parms'Default'' ⋄ ⎕IO←1
+      path←path,(FS∊¯1↑path)/'*' ⍝ ensure * after /
+      :Trap 2 22
+          viz←0=5⊃files←1 3 2 0 6⎕NINFO ⎕OPT 1∊path←1⎕NPARTS path
+          files←viz∘/¨¯1↓files
+          files[1]=←1
+          files[4]↓¨⍨←≢1⊃path
+      :Case 22
+          files←4⍴⊂⍬
+      :Case 2
+          files←WIN NtDirX{⍺:⍺⍺ ⍵ ⋄ ⍵⍵ ⍵}DirU path
+      :EndTrap
+      :If ∨/2↑dfa←∨/3 2⍴'dDfFaA'∊parms
+          files←((⎕IO⊃files)=1↑dfa)∘⌿¨files
+      :EndIf
+      :If 0=3⊃dfa
+          files←4⊃files
+      :EndIf
+    ∇
+
+
+    ∇ files←DirU x;b;cut;dir;list;none;⎕IO;⎕ML
+⍝ Unix ls: drop 1st line?, cut into sections
+      ⎕IO ⎕ML←1 0
+      files←0⍴¨0 '' 0 '' ⋄ none←1
+      :Trap 11          ⍝ drop . with ls -l:long, d:directories, H:follow symbolic links
+          none←0∊⍴list←' ',↑{('total'≡5⍴↑⍵)↓⍵}⎕SH'ls -ldH ',x,' 2>/dev/null'
+      :EndTrap
+      →none⍴0
+      b←cut⍲1⌽cut←∧⌿' '=↑list
+      dir←list[;2]='d'
+      files←1⊃⌽list←0 1∘↓¨⊃⊂/b∘/¨cut list
+      files←{(-⊥⍨' '=⍵)↓⍵}¨↓(⌽∧\FS≠⌽1⌷[1]files⍪' ')/files
+⍝ 1st section should be permissions, last is name
+      files←dir(↓⍕5↓¯1↓list)(2⊃⎕VFI,' ',5⊃list),⊂files
+    ∇
+
+    ∇ rslt←{att}NtDirX path;attrs;FileTimeToLocalFileTime;FileTimeToSystemTime;FindClose;FindFirstFileA;FindNextFileA;GetLastError;handle;keep;mask;max;next;ok;⎕IO;⎕ML
+⍝ Return NT directory information
+      :Access Shared Private
+      ⎕ML←1 ⋄ ⎕IO←0 ⋄ rslt←4⍴⊂'' ⋄ max←2*32
+      keep←(⍳32)~30 29 ⍝ all but Hidden & System
+      :If 0≠⎕NC'att'
+          keep,←('HS'∊att)/30 29
+      :EndIf
+      mask←(⍳32)∊keep
+      FindDefine
+      handle next←FindFirstFile path
+      →(0=handle)/0 ⍝ file not found
+      rslt←,⊂next
+      :While 1=0⊃ok next←FindNextFile handle
+          rslt,←⊂next
+      :EndWhile
+      :If 0 18∨.≠ok next
+          ('ntdir error:',⍕next)⎕SIGNAL 11
+      :EndIf
+      ok←FindClose handle
+      rslt←1 0 0 1 1 0 1 0/↓⍉↑rslt         ⍝ bin the unwanted elements
+      (0⊃rslt)←(attrs←(32⍴2)⊤0⊃rslt)[27;]  ⍝ Get attributes into bits, note dirs
+      rslt←(mask∧.≥attrs)∘/¨rslt           ⍝ discard hidden/system unless wanted
+      rslt[1]←Filetime_to_TS¨¨rslt[1]      ⍝ put times into ⎕ts format
+      (2⊃rslt)←max⊥max|⍉↑2⊃rslt            ⍝ combine size elements
+      rslt←(~(3⊃rslt)∊1 2⍴¨'.')∘⌿¨rslt     ⍝ remove . & ..
+    ∇
+
+    ∇ rslt←Filetime_to_TS filetime;⎕IO
+      :Access Shared Private
+      :If 1≠0⊃rslt←FileTimeToLocalFileTime filetime(⎕IO←0)
+      :OrIf 1≠0⊃rslt←FileTimeToSystemTime(1⊃rslt)0
+          rslt←0 0                   ⍝ if either call failed then zero the time elements
+      :EndIf
+      rslt←1 1 0 1 1 1 1 1/1⊃rslt    ⍝ remove day of week
+    ∇
+
+    ∇ FindDefine;T;WIN32_FIND_DATA
+      :Access Shared Private
+      T←'A*'[80∊⎕DR'']
+      WIN32_FIND_DATA←'{I4 {I4 I4} {I4 I4} {I4 I4} {U4 U4} {I4 I4} T[260] T[14]}'
+      'FindFirstFileA'⎕NA'P kernel32.C32|FindFirstFile',T,' <0T >',WIN32_FIND_DATA
+      'FindNextFileA'⎕NA'U4 kernel32.C32|FindNextFile',T,' P >',WIN32_FIND_DATA
+      ⎕NA'kernel32.C32|FindClose P'
+      ⎕NA'I4 kernel32.C32|FileTimeToLocalFileTime <{I4 I4} >{I4 I4}'
+      ⎕NA'I4 kernel32.C32|FileTimeToSystemTime <{I4 I4} >{I2 I2 I2 I2 I2 I2 I2 I2}'
+      ⎕NA'I4 kernel32.C32∣GetLastError'
+    ∇
+
+    ∇ rslt←FindFirstFile name;⎕IO;N
+      :Access Shared Private
+      rslt←FindFirstFileA name(⎕IO←0)
+      :If 1∊(¯1+2*32 64)=0⊃rslt       ⍝ INVALID_HANDLE_VALUE 32 or 64
+          rslt←0 GetLastError
+      :Else
+          (1 6⊃rslt)trimAt←N←⎕UCS 0   ⍝ shorten the file name at the null delimiter
+          (1 7⊃rslt)trimAt←N          ⍝ and for the alternate name
+      :EndIf
+    ∇
+
+    ∇ rslt←FindNextFile handle;⎕IO;N
+      :Access Shared Private
+      rslt←FindNextFileA handle(⎕IO←0)
+      :If 1≠0⊃rslt
+          rslt←0 GetLastError
+      :Else
+          (1 6⊃rslt)trimAt←N←⎕UCS 0   ⍝ shorten the filename
+          (1 7⊃rslt)trimAt←N          ⍝ shorten the alternate name
+      :EndIf
+    ∇
+
+    ∇ enc←NewEncrypt
+    ⍝ Provide a new encryption instance
+      :If 0=⎕NC'⎕se.Dyalog.Symmetric'
+          'Dyalog'⎕SE.⎕NS''
+          ⎕SE.SALT.Load'[SALT]/tools/special/symmetric -target=⎕se.Dyalog'
+      :EndIf
+      enc←⎕NEW ⎕SE.Dyalog.Symmetric'Rijndael'
+    ∇
+
+    ∇ num←num numReplace fromto;st;⎕IO;∆;np;p;b;sf;i;from;to
+    ⍝ fromto is the list of lists of numbers to replace
+      ⎕IO←0
+      :For from to :InEach fromto
+          ∆←-/(st sf)←(⍴to),⍴from
+          :If 0<np←⍬⍴⍴p←{⍵/⍳⍴⍵}from⍷num
+              :If ∆≤0
+                  num[p∘.+⍳st]←np st⍴to ⋄ →∆↓0
+                  b←(⍴num)⍴1 ⋄ b[p∘.+⍳sf]←np sf⍴sf↑st⍴1 ⋄ num←b/num
+              :Else
+                  b←((⍴num)+np×∆)⍴1 ⋄ b[i←(p+∆×⍳np)∘.+⍳st]←np st⍴st↑sf⍴1 ⋄ num←b\num
+                  num[i]←np st⍴to
+              :EndIf
+          :EndIf
+      :EndFor
+    ∇
+
+⍝ In 2014 it was decided to translate some new APL characters not in Classic in ⎕Uxxxx form.
+⍝ For this we need to scan the source for these special cases. So far we have these:
+⍝ Rank (U2364), Key (U2338), Variant (U2360) and Iota underbar (U2378).
+⍝ They have to be functions to be seen in ⎕SE.SALT
+
+    ∇ s←Special ucs2 ⍝ 0 1 (LE) or 1 0 (BE) or 0 0 (UTF8)
+      :If 1∊ucs2 ⍝ UCS2 values
+          s←ucs2[2]⌽¨35,¨100 56 96 120 ⍝ big endian?
+      :Else      ⍝ UTF8 values
+          s←(226 141 164)(226 140 184)(226 141 160)(226 141 184)
+      :EndIf
+    ∇
+
+    ∇ u←up Ux ucs2;U   ⍝ their ⎕U format in Classic. Arg same as Special.
+      U←('⎕','uU'[⎕IO+up],'23')∘,¨'64' '38' '60' '78'
+      :If 1∊ucs2
+          u←ucs2[2]{,⍺⌽⍉0 256⊤⎕UCS ⍵}¨U
+      :Else
+          u←'UTF-8'∘⎕UCS¨U ⍝ done this way to prevent translation when saving
+      :EndIf
+    ∇
+
+    uxxxx←0∘Ux  ⋄  Uxxxx←1∘Ux
+
+    ∇ r←{remove}GetUnicodeFile ra;b;clean;file;key;nc;tn;utf8;ucs2;from;to;transform;⎕TRAP
+⍝ Read a Unicode (UTF-8 or even UCS-2) file
+⍝ This version allows excluding specific 1-byte characters before the translation
+⍝ This prevents TRANSLATION errors in classic interpreters
+      (file key)←2↑(condEncl ra),0
+     ⍝ For Classic do we transform special character like RANK into ⎕Uxxxx?
+      :If transform←82=⎕DR''
+          transform←{6 911::1 ⋄ '1'∊⎕SE.SALT.Settings'mapprimitives'}0
+      :EndIf
+⍝ Try to read using the V15 system fns, if it fails, revert to the old code:
+      :Trap 92 2
+          r←{⍵↓⍨-(⎕UCS 10)=¯1↑⍵}1⊃⎕NGET file(256×transform)
+          →0
+      :EndTrap
+     
+      clean←{⍵} ⍝ do we need to remove anything from the file?
+      :If 2=⎕NC'remove'
+          clean←~∘remove
+      :EndIf
+      r←'' ⋄ ⎕TRAP←19 'E' '→0' ⍝ ⎕MAP error if empty file
+      nc←⍴r←256|83 ¯1 ⎕MAP file
+      utf8←239 187 191≡3↑r ⋄ ucs2←(2 2⍴254 255 255)∧.=2↑r ⍝ 254 255=big endian
+⍝ An updated SALT won't know about this new setting
+      :If transform
+          b←∨/ucs2 ⋄ from←Special ucs2 ⋄ to←(Uxxxx ucs2),¨⊂ucs2[1]⌽32,b/0
+          nc←⍴r←r numReplace from to
+      :EndIf
+      :If utf8 ⍝ UTF-8 header
+          r←'UTF-8'⎕UCS clean 3↓r
+      :ElseIf ∨/ucs2
+          r←⎕UCS clean 1↓(256*ucs2)+.×⍨(2,⍨nc÷2)⍴r
+      :Else ⍝ assume UTF-8 and trap any error
+          :Trap 0
+              r←'UTF-8'⎕UCS clean r ⍝ decode using KEY
+          :Else
+              ⎕DMX.Message ⎕SIGNAL ⎕EN
+          :EndTrap
+      :EndIf
+    ∇
+
+    ∇ text PutUTF8File ra;file;key;tn;⎕IO;s;BOM;transform
+⍝ Write Unicode text to new file on disk
+      (file key)←2↑(condEncl ra),0
+     ⍝ Shall we transform ⎕Uxxxx?
+      transform←(82=⎕DR'')∧'1'∊⎕SE.SALT.Settings'mapprimitives'
+     ⍝ Try the V15 fns first, if it fails revert to the previous code:
+      :Trap 2
+          {}text'UTF-8-BOM'⎕NPUT file(1+256×transform)
+          →0
+      :EndTrap
+      :Trap 22
+          0 ⎕NRESIZE tn←file ⎕NTIE ⎕IO←0
+      :Else
+          tn←file ⎕NCREATE 0
+      :EndTrap
+      s←⍴text       ⍝ do we need a BOM?
+      BOM←239 187 191/⍨s≠⍴text←'UTF-8'⎕UCS text
+      text←BOM,text ⍝ write unsigned UTF-8 header
+      :If transform
+          text←(uxxxx 0)s numReplace⍨text numReplace(Uxxxx 0)(s←Special 0)
+      :EndIf
+      text←⌊text-256×text>127
+      text ⎕NAPPEND tn 83
+      ⎕NUNTIE tn
+    ∇
+    :endsection
+
+    :section Registry
+⍝ =====  Registry functions
+
+    ∇ r←SALTsetFile ⍝ file used under Unix for SALT settings
+      :If 0=⎕NC'SALTSettingsFile'
+          SALTSettingsFile←r←(⎕IO⊃⎕SH'echo ~',⎕AN),'/.dyalog/SALT.settings'
+      :Else  ⍝ grab cached value
+          r←SALTSettingsFile
+      :EndIf
+    ∇
+
+    ∇ r←getEnvir w;t;⎕ML
+      :Access Shared Private
+    ⍝ SALT is a special env var that is assumed to be $DYALOG/SALT if not present
+      w,←(WIN∧'HOME'≡w)/'path'
+      :If (w≡'SALT')∧t←0=⍴r←2 ⎕NQ'.' 'GetEnvironment'w
+    ⍝ We want SALT but it is NOT defined so let's build it
+          r←r↓⍨-FS=¯1↑r←2 ⎕NQ'.' 'GetEnvironment' 'DYALOG'
+          r←r,FS,'SALT' ⍝ default
+      :ElseIf t∧w≡'USER' ⍝ USER is also special
+          r←⎕AN
+      :ElseIf WIN<t
+      :AndIf UnixFileExists t←SALTsetFile
+    ⍝ Read setting from the INI files
+          r←GetUnicodeFile t
+          (r t)←↓⍉↑' 'splitOn1st⍨¨r splitOn ⎕UCS 10⊣⎕ML←1
+          r←rlb(r⍳⊂w)⊃t,⊂''
+      :EndIf
+    ∇
+
+      UnixFileExists←{0::(,'0')≡⎕IO⊃⎕SH'test -f ',⍵,'; echo $?' ⍝ suggested by AS
+          ⎕nexists ⍵}
+
+    ∇ value←regSetting arg;canbeempty;name;s;v
+⍝ Return setting from the registry/environment
+⍝ arg is: [1] Key, [2] default if not present or if empty, and [3] can it be empty
+      arg←,condEncl arg
+      (name value canbeempty)←arg,(⍴arg)↓'' '' 1
+      :Access Shared Private
+      :Trap 0
+          :If canbeempty∨0<⍴v←getEnvir(WIN/'SALT\'),name
+              value←v
+          :EndIf
+      :EndTrap
+    ∇
+
+    ∇ name saveSettings value;file;i;key;L;n;t;txt;v
+⍝ Save name with value in registry
+      :Access Shared Private
+      key←3⊃SettingsTable[SettingsTable[;1]⍳⊂name;]
+      :If WIN
+          regPutString key value
+      :Else ⍝ must be Unix world
+          :Trap 22
+              txt←GetUnicodeFile file←SALTsetFile
+     
+            ⍝ Read setting from the settings files
+              n←⍴txt←(txt splitOn L←⎕UCS 10)~⊂''
+              t←1⊃¨txt splitOn1st¨' '
+              :If n<i←t⍳⊂key
+                  txt,←0 ⍝ key not there? append dummy
+              :EndIf
+              txt[i]←⊂key,' ',⍕value
+              txt←1↓⊃,/L,¨txt
+          :Else
+              txt←key,' ',⍕value
+          :EndTrap
+     
+          txt PutUTF8File file
+         ⍝ Cover case where root is doing this
+          :If 0∊1↑⎕AI
+              {}⎕SH'chown ',⎕AN,' ',file
+          :EndIf
+      :EndIf
+    ∇
+
+⍝ The following functions were modified from
+⍝ APL Team Ltd ⋄ http://www.aplteam.de ⋄ mailto:kai@aplteam.com
+
+    ∇ regClose HANDLE;RegCloseKey
+      :Access Shared Private
+      ⎕NA'U ADVAPI32.dll.C32|RegCloseKey U'
+      {}RegCloseKey HANDLE
+    ∇
+
+    ∇ HANDLE←regGetHandle KEY;HKEY;KEY_ALL_ACCESS;rck;T
+      :Access Shared Private
+      HKEY←2147483649             ⍝ 'HKEY_CURRENT_USER' HEX 0x80000001
+      KEY_ALL_ACCESS←983103       ⍝ HEX 0xF003F
+⍝ The next line covers the case for reg & Unicode versions
+      T←'A*'[⎕IO+80∊⎕DR'']
+      'rck'⎕NA'I ADVAPI32.dll.C32|RegCreateKeyEx',T,' U <0T I <0T I I I >U >U'
+      HANDLE←⊃2⊃rck HKEY KEY 0 '' 0 KEY_ALL_ACCESS 0 0 0
+    ∇
+
+    ∇ regPutString(SUBKEY STRING);HANDLE;Path;REG_SZ;set;T;uni
+⍝ Stores the value of a Registry SUBKEY
+      :Access Shared Private
+      Path←(getEnvir'inifile'),'\SALT'
+      HANDLE←regGetHandle Path
+      STRING←,STRING
+      REG_SZ←1 ⍝ String data type
+      T←'A*'[uni←1+80∊⎕DR'']
+      'set'⎕NA'I ADVAPI32.dll.C32|RegSetValueEx',T,' U <0T I I <0T I4'
+      {}set HANDLE SUBKEY 0 REG_SZ STRING(uni×1+⊃⍴STRING)
+      regClose HANDLE
+    ∇
+    :endsection
+
+   ⍝ 0(400⌶)0
+
+:EndNameSpace ⍝ SALTUtils  $Revision: 27928 $

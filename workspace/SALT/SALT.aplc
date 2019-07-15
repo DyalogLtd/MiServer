@@ -1,0 +1,1521 @@
+:Class SALT
+⍝ Simple APL Library Toolkit for Dyalog
+⍝ 2016 02 09 DanB: Load now treats ⍝∇:require and ⍝!:require almost the same way
+⍝                  Snap allows comma between -class values
+⍝ 2016 04 04 DanB: Load now handles ⍝!require file:// in V14
+⍝ 2016 05 02 DanB: changed some Load error messages
+⍝ 2016 05 11 DanB: changed error msg in Boot
+⍝ 2016 05 18 DanB: Snap keeps casing for file names
+⍝ 2016 06 06 DanB: added -clean for Snap and reordered Loads automatically
+⍝ 2016 06 14 DanB: Settings to allow empty workdir
+
+    :Field readonly Public Shared Version←2.63
+
+    :Include SALTUtils
+
+    ⎕USING←0⍴⊂⍬ ⋄ ⎕IO←1 ⋄ ⎕ML←2 ⋄ ⎕WX←3
+
+⍝ --- Private fields
+
+    :Field Private  shared  _TRAP←(709+⍳5) 'C' '(⎕io⊃⎕dm)⎕signal⎕en'
+    :Field Private  shared  CR←⎕av[4]
+    APLV←'.'⎕wg 'aplversion'
+    :Field Private  shared  WIN←(⊂,'W')∊APLV[3]
+    APLV←{⍎(2>+\'.'=⍵)/⍵}2⊃APLV
+    :Field Public   shared  FS←'/\'[1+WIN]
+    :Field Public   shared  PATHDEL←'∘',':;'[1+WIN] ⍝ delimiter accepted on input for SALT/UCMD paths
+    :Field Private  shared  LINDEL←(~WIN)↓13 10
+    :Field readOnly shared Public SALTEXT←'.dyalog'
+    :Field readOnly shared Public SALTFOLDER←'[SALT]'
+    :Field Public   shared FTS
+     FTS←{0::0 ⋄ 1⊣0 (7↑6↑⎕ts) 0 'xx' (1159⌶)⍵} ⎕fx'r←CRef' 'r←2⊃⎕RSI'
+     Pi←{⍵:0 ⋄ 3::0 ⋄ 'arm'≡3↑1⊃⎕sh'uname -m'}WIN
+
+    split←{1↓¨(s∊⍵)⊂s←(⍵∊1↑⍺)↓⍵,⍺}
+
+    :field shared SettingsTable←0 5⍴'' ⍝ name; description; registry name; default; value
+    SettingsTable⍪←'compare;the comparison program to use;CompareCMD;APL;'split';'  ⍝ e.g. [ProgramFiles]BeyondCompare
+   ⍝ Cmd Folders are locations where Spice commands are stored - their existence is not challenged
+   ⍝ 2nd folder is something like this: C:\Users\DanB2\Documents\Dyalog APL 14.0 Unicode Files
+    UserFolder←'[HOME]',(WIN/FS,'Documents'),FS,'MyUCMDs'
+    SettingsTable⍪←('cmddir⍟the list of Spice folders (commands) to use separated by ∘⍟CommandFolder⍟',SALTFOLDER,FS,'spice∘',UserFolder,'⍟')split'⍟'
+    SettingsTable⍪←'debug;debug level;DebugLevel;0;0' split';'
+    SettingsTable⍪←'editor;the editor program to use;EditorCMD;notepad;'split';'
+    SettingsTable⍪←'edprompt;editor confirmation prompt;EdPrompt;1;' split';'
+    SettingsTable⍪←'mapprimitives;map some primitives to ⎕Uxxxx for Classic users;MapPrim;1;' split';'
+    SettingsTable⍪←('newcmd;new command detection;CmdDetect;',((1+Pi)⊃'auto' 'manual'),';') split';'          ⍝ automatic for all but PI
+    SettingsTable⍪←'track;element tracking;Track;;' split';'
+    SettingsTable⍪←'varfmt;variables saving format;VarFmt;xml;' split';'            ⍝ only APL and XML so far
+   ⍝ WorkFolders are locations where files are searched - their existence is not challenged
+    SettingsTable⍪←('workdir⍟the list of storage folders to use separated by ∘⍟SourceFolder⍟',SALTFOLDER,'⍟')split'⍟'
+
+⍝ --- Utilities
+
+    if←/⍨                 ⍝ as in '→0 if condition'
+    dotVer←{(0<⍵)/'.',⍕⍵} ⍝ >0 versions appear with a dot
+
+⍝ --- Public methods
+
+    ∇ Reboot
+    ⍝ Bootstrap loader for SALT if the AddSALT Registry Parameter is 1 or Y or unset
+      :Access public shared
+      ⎕SE.SALTUtils.BootSALT
+    ∇
+
+    ∇ ref←Boot file;arg;at;cmd;data;f;folder;hasarg;i;line;method;name;nf;sfile;TARGET;tmp;txt;wf;⍙FUNCTION;⍙XLOAD;isFn;define;b;fd;quote
+      :Access Shared Public
+     
+      :If isHelp file
+          ref←'Boot filename [arg]' ''
+          ref,←'Boot from a file containing instructions or a function' '' 'Modifiers:'
+          ref,←⊂'-Xload      do not run the ⎕LX'
+          ref,←⊂'If arg is a .dyapp file each line may be an instruction. If .dyalog it is a function to be executed'
+          ref←⊃ref
+          →0
+      :EndIf
+      :If hasarg←326∊⎕DR arg←file
+          (file arg)←file
+      :EndIf ⍝ maybe file followed by arg to fn to run
+      file←fixFsep 1⊃1↑'-xload'∆parse file'1L'
+      ⍙FUNCTION←⍙XLOAD∨SALTEXT≡(-⍴SALTEXT)↑file ⍝ maybe we can tell by the extension
+     
+      txt←i←0 ⋄ nf←⍴wf←getSetting'workdir'
+      :While nf≥i←i+1
+          sfile←(i⊃wf)ClassFolder file
+          folder←(1⊃FS splitLast sfile),FS
+          sfile←sfile{⍺,(⍵≢(-⍴,⍵)↑⍺)/⍵}(1+⍙FUNCTION)⊃'.dyapp'SALTEXT ⍝ add extension if absent
+          :Trap 0
+              txt←splitOnNL sfile ⍝ read file as list of strings
+          :EndTrap
+      :Until txt≢0  ⍝ if we found the file, exit the for loop
+      (⎕EM ⎕EN)⎕SIGNAL ⎕EN if txt≡0
+     
+      define←{(83 11∧.≠⎕DR n),⊂n←tmp.⎕FX{~⍙XLOAD:⍵ ⋄ ⍵/⍨~1∊¨'⍎⎕LX'∘⍷¨⍵}⍵}
+     
+     ⍝ Maybe this is a fn after all, let's check
+      isFn←0 ⋄ 'tmp'⎕NS''
+      :If ⍱/'load ' 'target '∊⍨5 7↑¨⊂lCase rlb ⎕IO⊃txt ⍝ must NOT be named 'load' or 'target'
+          ⍙FUNCTION∨←⎕IO⊃(isFn name)←define txt
+      :EndIf
+      :If ⍙FUNCTION ⍝ we have a fn
+          :If ~isFn ⍝ have brought it in yet?
+              (isFn name)←define txt
+          :EndIf
+          'Unable to define function in file'⎕SIGNAL 11 if~isFn
+          at←,tmp.⎕AT name ⍝ find its valence
+          tmp.a←(1+hasarg)⊃⍙XLOAD arg ⍝ if the fn needs an arg we supply the one given to Boot
+        ⍝ Find what type of fn we are dealing with
+          i←{2::1 ⋄ 85⌶⍵}'0'
+          {}i{85::0 ⋄ ⎕TRAP←0⍴⊂'' ⋄ ⍺:1 tmp.(85⌶)⍵ ⋄ tmp.(85⌶)⍵}name,(0<1 2⊃at)/' a' ⍝ trap missing result
+      :Else
+          TARGET←'#'
+          :For line :In txt                   ⍝ read each command
+              (cmd data)←line splitOn1st' '
+              data←rlb data
+              ⍝ Empty line or comment skipped
+              :If ~∨/(1 2↑¨⊂cmd)∊('//')(,' ')(,'⍝')
+                  :Select lCase cmd
+                  :Case 'load'
+                ⍝ Load's data is a file and possibly some switches
+                ⍝ Let's see if the user thought of adding "s around the filename:
+                      fd←∨/'''"'∊1↑data  ⍝ has the user already thought of it?
+                      quote←¯1↑'"',fd⍴data
+                      b←fd∧≠\data=1↑data ⍝ mask out filename
+                      f←~b←∨\b<' -'⍷data ⍝ find switches
+                      file←((~FS∊data)/folder),(-fd)↓fd↓rtb f/data ⍝ relative path?
+                      file←quote,(fixFsep file),quote
+                      :Trap 0
+                          'Loaded: ',⍕Load file,' -target=',TARGET,b/data
+                      :Else
+                          ⎕←'** Load failed: ',⎕DMX.EM ⋄ →0
+                      :EndTrap
+                  :Case 'run'
+                      TARGET⍎data
+                  :Case 'target'
+                      TARGET←data
+                  :Else
+                      ⎕←'Invalid command, ignored: ',line
+                  :EndSelect
+              :EndIf
+          :EndFor
+      :EndIf
+     ⍝ End Boot
+    ∇
+
+    ∇ ref←New class;args;cmd;hasargs;⍙VERSION;⎕TRAP
+      :Access Shared Public
+     
+      :If isHelp class
+          ref←'New classname [constructor arguments]' ''
+          ref,←'Create an instance of class without naming it in the workspace' ''
+          ref,←⊂'Modifiers:'
+          ref←⊃ref,⊂'-version=       Select specific version'
+          →0
+      :EndIf
+     
+      :If hasargs←args←~isChar class
+          (class args)←class
+      :EndIf
+     
+      ⎕TRAP←_TRAP
+      class←⎕IO⊃'-version='∆parse class'1'
+      cmd←'"',class,'" -noname',(0≢⍙VERSION)/' -version=',⍙VERSION
+      ref←#.⎕NEW(Load cmd),hasargs/⊂args
+    ∇
+
+    ∇ {ref}←{la}Load fname;allpaths;c;cname;ext;file;files;fix;fname;folder;found;i;info;isns;isvar;lastv;line;name;needed;nf;nosrc;nref;ns;path;protect;root;src;t;target;ts;v;ver;w;xml;⍙DISPERSE;⍙NOLINK;⍙NONAME;⍙SOURCE;⍙TARGET;⍙VERSION;⎕IO;⎕ML;⎕PW;⎕TRAP;dir;nc;okifempty;sw;cl;QV;keep;lines;req;msg;isrel
+      :Access Shared Public
+⍝ This function returns either a ref/name after defining the object in the ws or a ref/⎕OR (if -NONAME) of the Loaded object
+⍝ or a VTV if the source was requested or several fns were defined or a message for anything else (failure preceded by ***)
+      :If isHelp fname
+          ref←'Load [path]scriptfile' '' 'Load object(s) (space/var/pgm) in the workspace'
+          ref,←'' 'Modifiers:'
+          ref,←⊂'-target=Namespace      Specifies target namespace for load'
+          ref,←⊂'-disperse[=nam1,nam2]  Disperse elements in the target namespace specified'
+          ref,←⊂'-noname                Only return value, do not create name'
+          ref,←⊂'-nolink                Do not "link" loaded class to source file'
+          ref,←⊂'-protect               Do NOT load if the name is already defined'
+          ref,←⊂'-version=              Load specific version'
+          ref,←⊂'-source[=no]           Return the source ("no" means fix but use no source)'
+          ref←⊃ref ⋄ →0
+      :EndIf
+     
+      ⎕TRAP←_TRAP ⋄ ⎕ML←2 ⋄ ⎕IO←1
+      allpaths←,⊂fname←fixFsep 1⊃'-target= -noname -nolink -protect -source[=]no NO -disperse[=] -version='∆parse fname'1L'
+      :If ('['=1↑fname)∨isrel←isRelPath fname
+          allpaths←∪ClassFolder∘fname¨(getSetting'workdir')
+      :EndIf
+      lastv←0≡⍙VERSION ⍝ is the last version desired?
+      ⍙VERSION←⌊num ⍙VERSION
+      'la'Default 0 ⋄ (protect target okifempty)←3↑la   ⍝ target can be specified as a ref
+      protect∨←⍙PROTECT                                 ⍝ protection can be specified 2 ways
+     
+    ⍝ Where to define the object
+      :If (1≢⍙SOURCE)∧9≠⎕NC'target'
+          target←CRef ⍝ this is where we were called from
+      :AndIf 0≢⍙TARGET
+    ⍝ If -NONAME is specified we may still have to bring in other nss if :require is found and
+    ⍝ we define these where this code was called from (where else?)
+          root←∨/(⊂lCase ⍙TARGET)∊'⎕se'(,'#')
+          msg←((⍕DF target),'.',⍙TARGET),' is an invalid Target namespace'
+          msg ⎕SIGNAL 911 if root<9≠target.⎕NC ⍙TARGET
+          target←target⍎⍙TARGET
+      :EndIf
+     
+      ref←⍬
+    ⍝ Patterns are supported.
+    ⍝ They only apply to objects and their filenames.
+    ⍝ Folders used to store objects are not subject to filtering but their contents is.
+    ⍝ A folder containing a single object (a namespace) is subject to filtering.
+    ⍝ Such a folder will contain a file named 'name.txt'
+    ⍝ When a request is made with patterns we assume the extension is 'dyalog' if no dot is present
+      :If ∨/'?*'∊fname
+          sw←⊂∆propagate'SOURCE NOLINK NONAME VERSION'
+          :For i :In ⍳⍴allpaths
+              (path t ext)←1 splitName i⊃allpaths
+              (folder cname)←FS splitLast path
+             ⍝ Because we don't know to which folder the pattern applies we grab everything
+              (t files)←↓⍉2↑[2]List({q,⍵,q←WIN/'"'}folder),' -raw -recursive -full=2 -extension'
+              :If found←~0∊⍴dir←0≠∊⍴¨t
+              :AndIf found←∧/(∨\dir)≥t←(¯8↑¨files)∊⊂'name.txt' ⍝ skip non scripted namespaces
+                 ⍝ Any unscripted namespace?
+                  name←{⍵↑⍨-⊥⍨~'/\'∊⍨⍵}¨files
+                  ns←dir\1∊¨dir⊂name∊⊂'name.txt' ⍝ those are unscripted namespaces
+                  :If ~1∊ns ⍝ if none exist
+                      dir←{0}¨files←(~dir)∘/files ⍝ the easy case
+                  :Else
+                      keep←ns∨~dir ⋄ i←ns⍳1
+                      :Repeat
+                          isns←((⍴↑w)↑¨files)∊w←files[i],¨FS ⍝ namespace items
+                          keep←keep>isns ⋄ ns←ns>isns ⋄ ns[i]←0
+                      :Until (⍴ns)<i←ns⍳1
+                      (files dir)←keep∘/¨files dir
+                  :EndIf
+                  t←(⍳⍴ns)=ns⍳ns←'\.\d+(\.[^.]+)$'⎕R'\1'⊢files ⍝ remove ver no
+                  (files dir)←t∘/¨ns dir ⋄ name←{⍵↑⍨-⊥⍨~'/\'∊⍨⍵}¨files
+                 ⍝ Select files from pattern
+                  ext←'.',ext
+                  :If cname∨.≠'*'
+                      t←'^','\*' '\?' '\.'⎕R'.*' '.' '\\.'⊢cname ⍝ turn limited regex into full regex
+                      i←1+t ⎕S 2 ⎕OPT WIN remExt¨name            ⍝ find the files matching the pattern
+                      t←lCase¨⍣WIN⊢(-⍴ext)↑¨name[i]
+                      i←⊂⊂(dir[i]∨t∊⊂lCase⍣WIN⊢ext)/i
+                      (files dir)←i⌷¨files dir
+                  :Else ⍝ grab all files with the wanted extension
+                      t←lCase¨⍣WIN⊢(-⍴ext)↑¨files
+                      c←dir∨t∊⊂lCase⍣WIN⊢ext
+                      (files dir)←c∘/¨files dir
+                  :EndIf
+                 ⍝ Load files and namespaces separately
+                  files←files,¨dir/¨⊂FS,cname,ext
+                  :If ~0∊⍴files
+                      ref←protect target∘Load¨'"',¨files,¨'"',¨sw ⍝ preserve some switches
+                      ref←ref~⊂⍬ ⍝ remove namespaces not loaded
+                  :EndIf
+                  :Leave
+              :EndIf
+          :EndFor
+          →0
+      :EndIf
+     
+    ⍝ Locate source
+      xml←src←0
+      :For i :In ⍳nf←⍴allpaths ⍝ search each folder
+          (folder cname)←FS splitLast i⊃allpaths
+          (cname t ext)←1 splitName cname
+          :If 0<⍴1⊃(v ts)←folder ListVersionsTS cname,'.',ext
+              :If lastv
+                  ⍙VERSION←⌈/v
+              :Else
+                  lastv←t=⍙VERSION←⍙VERSION{⍺+⍵×⍺≤0}t←⌈/v  ⍝ accept neg ver
+                  'version not found'⎕SIGNAL 922 if~⍙VERSION∊v~(1<⍴v)/0
+              :EndIf
+              :If lastv∧(∧/c∊v)∧2=⍴c←0∪t←⍙VERSION
+                ⍝ Are we dealing with the last version and do we have an unnamed file?
+                  t←1⍴c[⍒⊃ts[v⍳c]] ⍝ pick the most recently changed file
+              :EndIf
+              src←fixTabs splitOnNL name←folder,FS,cname,(dotVer t),'.',ext
+              :Leave
+          :EndIf
+      :EndFor
+     
+⍝ If the source was not found, that the name is a folder and that the switch
+⍝ disperse is not set then we may be looking at a snapped non scripted ns:
+      :If src ⍙DISPERSE≡0 0
+      :AndIf ∨/dir←isDir¨allpaths
+          files←'a'Dir(folder←((dir⍳1)⊃allpaths),FS),'*'
+      :AndIf ∨/w←(1⊃files)<(4⊃files)∊⊂c←'name.txt' ⍝ signature of a ns saved by Snap
+          (name v)←{s←¯1+⍵⍳' ' ⋄ ((-⊥⍨'.'≠t)↑t←s↑⍵)(s↓⍵)}GetUnicodeFile folder,FS,c
+      :AndIf (∧/~'{∇⍎⎕'∊(t⍳1)↓v)∧1=+/t←'←'=v ⍝ validate system variables definition
+          :If protect∧0≤target.⎕NC name
+              ref←'** "',('.',⍨⍕DF target),name,'" is already defined' ⋄ →0
+          :Else
+              name target.⎕NS'' ⋄ name target.{⍺⍎⍵}v ⍝ create ns and set sys vars
+              :If 0<⍴dir←1⊃files←(~w)∘/¨files ⍝ remove the name file, extension, vernos
+                  fname←0⍴files←(4⊃files)[⍋dir] ⍝ get files first
+                  :If 0<w←+/~dir ⍝ any file to load?
+                      fname←∪remVerno∘remExt¨w↑files
+                  :EndIf
+                 ⍝ We return a ref to the new namespace defined
+                  ref←target⍎name
+                  protect ref∘Load¨folder∘,¨(fname,w↓files),¨⊂∆propagate'SOURCE NONAME VERSION NOLINK'
+              :EndIf
+              →0
+          :EndIf
+      :EndIf
+     
+      →0 if okifempty∧src≡0
+      t←~'.'∊msg←(2-isrel)⊃allpaths,⍨⊂cname
+      msg←'cannot find the file "',msg,(t/'.',ext),'"',isrel/' in any of the SALT USER folders'
+      msg ⎕SIGNAL 22 if src≡0 ⍝ file found? then 'name' is defined also
+     
+      ref←src ⋄ →0 if ⍙SOURCE≡1   ⍝ exit returning source (a VTV)
+     
+⍝ In 2013 we started fixing the fns with their original ts/an
+⍝ The info is in the source. We extract it before going any further
+      t←'⍝)('∘≡∘(3∘↑)¨src ⋄ info←t/src ⋄ src←(~t)/src
+     
+      isns←':⍝ '∨.=t←1↑rlb 1⊃src  ⍝ is this a namespace (as opposed to a fn)?
+      isvar←'⌷'=t
+     
+⍝ We are now ready to FIX the object.
+⍝ Some items (like Classes) may require other namespaces to be present,
+⍝ if so, we need to bring them in BEFORE we fix the object (probably a Class):
+     
+      lines←⍬
+      :If isns∨isvar<t←APLV≥15
+          lines←('^.*?⍝(?i:([∇',t↓'!]):require +(?:file://)?)(?!.*?'')(=?\S+)\s*$')⎕S'\1\2'⊢src
+      :EndIf
+      :For line :In lines
+         ⍝ If the line starts with ∇ we are using the pre V15 style where = means "same folder as mine", otherwise (!)
+         ⍝ the path is ALWAYS relative, in other words: '∇/' or '!/' is absolute, '∇x' is SALT, '∇=' or ! is same
+          needed←folder{~isRelPath 1↓⍵:1↓⍵ ⋄ >/b←'∇='=2↑⍵:1↓⍵ ⋄ ⍺,FS,(1+∧/b)↓⍵}line
+          :Trap 22
+              1 target Load needed  ⍝ same location
+          :Else
+              ⎕←'*** Required file ',needed,' not found'
+          :EndTrap
+      :EndFor
+     
+      :If nosrc←isns                  ⍝ ** [name]Spaces (Class 9) **
+          nosrc←'no' 'NO'∊⍨⊂⍙SOURCE
+          :If ⍙DISPERSE≡0 ⍝ normal Load
+              fix←⍙NONAME⍱nosrc
+              :Trap 0
+                  :If protect∧fix ⍝ we need to find if the name is available
+                      c←':class ' ':interface ' ':namespace '
+                      :For w :In src
+                          :If 4>i←1⍳⍨↑¨c⍷¨⊂lCase t←rlb w  ⍝ is it one of these?
+                              cname←¯1↓(t⍳' ')↑t←(⍴i⊃c)↓t ⍝ then grab the name
+                              :Leave                      ⍝ and skip the rest
+                          :EndIf
+                      :EndFor
+                  :AndIf 0<target.⎕NC cname        ⍝ if it already exists
+                      ref←'** "',cname,'" is already defined' ⋄ →0
+                  :Else  ⍝ name is to be (re)defined
+                     ⍝ Do we want a ref or no source? Then don't fix with name.
+                      nref←ref←fix target.⎕FIX src ⍝ otherwise use the new name
+                      :If nosrc
+                          cname←(⍕DF target),'.',2⊃'.'splitLast⍕ref ⍝ find full target name
+                          cname CopyNs ref         ⍝ perform copy
+                      :EndIf
+                     ⍝ We now have the ref defined, we now need to reset the fns' ts/an
+                      nref fixTs info
+                  :EndIf
+              :Else
+                  ref←'*** Could not bring in <',name,'>:',⍕⎕DMX.(EM Message) ⋄ →0
+              :EndTrap
+     
+          :Else          ⍝ disperse the elements
+     
+        ⍝ There are 2 things to consider:
+        ⍝ 1. the target must be there (this has been checked already)
+        ⍝ 2. the elements needed must be in the source
+     
+              nref←0 target.⎕FIX src ⋄ QV←⍬
+              :If ⍙DISPERSE≡1
+                  needed←nref.⎕NL-2.1 9 3 4 ⋄ w←⍬ ⍝ everything
+                  QV←'⎕IO' '⎕CT' '⎕ML' '⎕PP' '⎕FR' '⎕WX'
+              :Else                                             ⍝ only the names specified
+                  QV←w/⍨t←'⎕'∊¨1↑¨w←⍙DISPERSE splitOn',' ⋄ needed←(~t)/w
+                  (⍕'these names are not in the script:',t/needed)⎕SIGNAL 911 if∨/t←1>nref.⎕NC needed
+              :EndIf
+            ⍝ OK, all seem valid, bring them in
+              :If protect∧∨/t←0≤target.⎕NC needed
+                  ref←'**',⍕(t/needed)'already defined'
+                  →0
+              :Else
+                  target.⎕EX¨needed
+              :EndIf
+              :Trap 16 11 if 9∊⌊t←nref.⎕NC needed
+                  ref←'*** Problem bringing in classes (derived classes?)'
+                  :If ~0∊⍴cl←(9.4=t)/needed         ⍝ start with classes
+                      target{⍺.⎕FIX ⎕SRC nref⍎⍵}¨cl
+                  :EndIf
+                  ext←'.',⍨⍕DF target
+                  :For ns :In w←(nosrc∧9.1=t)/needed
+                      :If (⍕nref⍎ns)≡(⍕nref),'.',ns ⍝ is this for real (not nested)?
+                          cname←ext,ns              ⍝ find full target name
+                          cname CopyNs nref⍎ns      ⍝ perform copy
+                      :EndIf
+                  :EndFor
+                  ref←'*** Unable to comply because of sourced objects'
+                  (⍕target)⎕NS'nref.'∘,¨needed~cl,w ⍝ bring them in
+                  :If ~0∊⍴QV
+                      target⍎⍕QV,'←',nref⍎⍕QV
+                  :EndIf
+                  ref←'* ',(⍕⍴needed),' objects dispersed in ',⍕target ⍝ return OK
+              :EndTrap
+              :Return                               ⍝ no need to stamp data
+          :EndIf
+     
+      :ElseIf isvar              ⍝ ** Variables (Class 2) **
+     
+      ⍝ The result of <Load> can only be the name of the object or its rep/val if -noname
+          nref←target(t←{1↓¯1↓⍵[⍳⍵⍳'←']}⎕IO⊃src)src
+          (t ref xml)←target ⍙NONAME t protect fixVar src
+          →⍙NONAME/0
+     
+      :Else                      ⍝ ** Fns/Ops (Class 3/4) **
+     
+      ⍝ Find the name of the fn/op (we could parse the text but we use ⎕FX)
+          ns←⎕NS'' ⋄ fname←ns.⎕FX src  ⍝ define locally
+          :If t←isChar fname
+          :AndIf ⍙NONAME∨protect≤0=nc←target.⎕NC fname
+              :If ⍙NONAME
+                  ref←ns.⎕OR fname ⋄ →0
+              :EndIf
+              target.⎕EX(nc∊2 9)/fname   ⍝ make sure we can fix in target
+          :AndIf isChar ref←target.⎕FX src
+             ⍝ Fix the ts/an
+              target fixTs info
+              nref←target fname src info
+          :Else
+              ref←(1+t)⊃('*** could not fix <',name,'>')('** "',fname,'" is already defined')
+              →0
+          :EndIf
+      :EndIf
+      v←(⍙VERSION⌈t)×¯1*t←~lastv ⍝ mark this version as a "requested previous version"
+      :If ~⍙NOLINK∨nosrc∧isns    ⍝ asking for no source for a ns implies no link
+          SetDelta nref name v((~⍙NONAME)/⍕ref)((1+xml)⊃'apl' 'xml')0
+      :EndIf
+     ⍝ End Load
+    ∇
+
+
+    ∇ tgt←{opt}Save arg;allver;but;cap;cmd;delims;ERR;ext;file;filename;fnname;folder;i;isFn;isVar;last;maxver;msg;name;named;nosource;ns;n0;origts;prev;r;ref;same;savename;src;t;there;usever;v;v0;xml;⍙BANNER;⍙CONVERT;⍙ENCRYPT;⍙FORMAT;⍙MAKEDIR;⍙NOPROMPT;⍙VERSION;⎕TRAP
+      :Access Shared Public
+⍝ SAVE object [to file]
+⍝ opt allows to error out instead of not saving when prompted
+     
+      :If isHelp arg
+          r←'Save object [filename]' ''
+          r,←'Save object in a specific file (default same place if already SALTed)' '' 'Modifiers:'
+          r,←⊂'-convert        Convert the namespace into source form if necessary'
+          r,←⊂'-banner=        Add a banner at the top of the converted namespace'
+          r,←⊂'-noprompt       Do not prompt for confirmation'
+          r,←⊂'-makedir        Create all necessary directories'
+          r,←⊂'-version[=]     Version number to save'
+          r,←⊂'-format=        Save variable in specific format (APL or XML)'
+          tgt←⊃r ⋄ →0
+      :EndIf
+     
+      tgt←0 0⍴'' ⍝ assume it won't work
+      :If 0=⎕NC'opt'
+          opt←0
+      :EndIf  ⍝ default no options
+     
+      ERR←900 ⍝ this is the error starting range we use if things go wrong
+      but←'Yes' 'No',(1↑opt)/⊂'Cancel' ⍝ the buttons on forms
+     
+⍝ We accept strings containing a name AND a (ref string) argument
+      isVar←0 ⍝ is this a variable?
+     
+⍝ There are 2 ways to call this fn:
+⍝ Save ref ['location']    : ref is a class or ns, location is where to save (default as tagged)
+⍝ Save 'object [location]' : object may be a path. If relative CRef provides the source ns.
+⍝ object may be a class 2 3 4 9 non GUI or ⎕OR object
+     
+      :If isFn←isChar arg    ⍝ is this a normal argument?
+          t←' '⍳⍨arg←rlb arg ⋄ fnname←rlb cmd←t↓arg ⋄ arg←(t-1)↑arg
+          :If '['∊⍕ref←CRef  ⍝ unnamed (hopefully not renamed) ref?
+              :If 0∊t←'.'≠fnname←arg
+                  ref⍎←(¯1+i←-t⊥t)↓arg ⋄ fnname←i↑arg
+              :EndIf
+          :Else              ⍝ named ref
+              (t ref fnname)←{s←s/⍨s≢⍕r←⍎s←⍵↓⍨¯1+i←-⊥⍨⍵≠'.' ⋄ s r,⊂i↑⍵}(⎕IO⊃⎕NSI){'#.'≡2↑⍵:⍵ ⋄ ⍺,'.',⍵}arg
+          :EndIf
+          n0←ref fnname
+          :If (t←|ref.⎕NC⊂fnname)∊9.1 9.4 9.5
+              n0←DF ref←ref⍎fnname ⋄ isFn←0
+          :Else
+              :If isVar←2∊⌊t
+                  isVar←~valWithRef ref⍎fnname
+              :EndIf
+              'Invalid object'⎕SIGNAL ERR+2 if isVar⍱isFn←t∊3.1 3.2 4.1 4.2
+          :EndIf
+      :Else                  ⍝ (ref name) pair: ref is a class or a ns to save
+          'Invalid argument'⎕SIGNAL 5 if 2<⍴,arg
+          fnname←n0←⍕⍬⍴(ref cmd)←2↑arg,⊂''   ⍝ fully qualified nspace name
+      :EndIf
+     
+      ⎕TRAP←_TRAP
+      savename←0 fixFsep 1⊃1↑'-version[=] -makedir -format= -noprompt -convert -banner='∆parse cmd'1SL'
+      :If ∨/t←'='FS=¯1↑savename ⍝ using .../= as filename means use the same name as the object
+          savename←((-1↑t)↓savename),'.'afterLast⍨'.',⍕fnname
+      :EndIf
+      usever←1≡⍙VERSION←⌊|num ⍙VERSION ⍝ -ver alone means "use version #s"
+     
+⍝ Rules:
+⍝ If a filename  is supplied we use it else we use the one linked to the object
+⍝ If a version # is supplied we use it to possibly overwrite the file
+⍝ If only -version (no =) then we start using version #s if not already the case
+⍝ Without it we either overwrite or continue using version #s
+     
+      :If named←0≠⍴filename←savename ⍝ file name specified
+          filename←(1⊃getSetting'workdir')ClassFolder savename ⋄ (v0 origts)←¯0.5 ''
+      :EndIf
+     
+     ⍝ Get the SALT info if any
+      :If isFn
+          'Fn is not SALTed'⎕SIGNAL 911 if named<0∊⍴v←fnData(ref.⎕NR fnname)fnname
+      :ElseIf isVar
+          'Variable is not SALTed'⎕SIGNAL 911 if named<0∊⍴v←varData⊂ref fnname
+      :Else ⍝ ref
+          'Save cannot be used on SALT itself'⎕SIGNAL 911 if named<{0::0 ⋄ ⎕THIS≡⍵}ref ⋄ v←⍬
+          :If 9.1=ref.⎕NC⊂'SALT_Data'
+              v←ref.SALT_Data
+          :ElseIf ~named
+              'Ref does not point to a SALTed namespace'⎕SIGNAL 911
+          :EndIf
+      :EndIf
+     ⍝ If no filename has been supplied and we have data we use that name
+      :If same←named⍱0∊⍴v
+          filename←v.SourceFile
+      :EndIf
+      :If ~0∊⍴v  ⍝ we have data
+          :If same
+          :OrIf {WIN:≡/lCase¨¨⍺ ⍵ ⋄ ⍺≡⍵}/1 0 1∘/∘splitName¨filename v.SourceFile ⍝ then if the names match
+              filename←v.SourceFile ⋄ origts←⍕v.LastWriteTime ⋄ v0←v.Version     ⍝ then record this
+          :EndIf
+      :EndIf
+      (filename t ext)←splitName filename ⍝ get rid of the verno
+      (folder name)←FS splitLast filename
+     
+⍝ Find the version number to use
+      maxver←⌈/0,allver←folder ListVersions name,'.',ext
+      :If usever∨(⍙VERSION≡0)∧maxver>0
+          ⍙VERSION←1+maxver
+          :If ⍙NOPROMPT<(v0<maxver)∧v0>0 ⍝ we should be the last version
+              cap←'This is not the last version!'
+              →0 if 2=t←msgBox cap('Continue?')'Warn'but
+          :EndIf
+      :EndIf
+     
+      cap←'Save ',24{⍺>⍴⍵:⍵ ⋄ '...',(3-⍺)↑⍵}filename
+      :If ⍙NOPROMPT<there←⍙VERSION∊allver
+          →0 if 2=t←msgBox cap('Confirm overwrite of ',({0≡⍵:'file' ⋄ 'version ',fmtVersion ⍵}⍙VERSION),'?')'Warn'but
+          'abort'⎕SIGNAL ERR+1 if t=3
+         ⍝ OK, we have permission to overwrite, let's make sure it hasn't been overwritten by someone else first
+      :AndIf (v0≠¯0.5)∧⍙VERSION≥v0 ⍝ don't if we are trying to replace a lower version
+          t←⍕lastWrTime file←folder,FS,name,(dotVer ⍙VERSION),SALTEXT{0∊⍴⍵:⍺ ⋄ '.',⍵}ext
+      :AndIf origts{⍺≢⍵:6<⍴⍺∪⎕D ⋄ 0}t   ⍝ not same as we loaded?
+          t←{0∊⍴⍵:'No timestamp found for original file!' ⋄ 'Now dated ',⍵}t
+          t←file''({0<⍴⍵:'Was dated ',⍵,' when loaded.' ⋄ 'No previous date available.'}origts)(t)'Proceed anyway?'
+          →0⍴⍨1≠msgBox'Source file timestamp has changed...'t
+      :EndIf
+⍝ The file may not be there but the version to use is less than the highest version
+      :If ⍙NOPROMPT<there<⍙VERSION<maxver ⍝ Version is LESS than highest version number
+          →0 if 1≠msgBox cap('Note: highest existing version is number ',(fmtVersion maxver),'. Proceed anyway?')'Warn'
+      :EndIf
+     
+      (last tgt)←(folder,FS,name)∘,¨(0 1/¨⊂dotVer ⍙VERSION),¨⊂SALTEXT{0∊⍴⍵:⍺ ⋄ '.',⍵}ext
+      xml←nosource←0
+      :If isFn
+          'function is locked'⎕SIGNAL 911 if 0∊⍴src←remTag ref.⎕NR fnname
+          :If 3.2∊ref.⎕NC⊂fnname  ⍝ Older version of idioms still have no ← on the first line
+              src[⎕IO]←⊂((>/t⍳'←{')/fnname,'←'),t←⎕IO⊃src
+          :EndIf
+          ref←ref fnname src ⍬
+      :ElseIf isVar
+          :If 0≡xml←⍙FORMAT ⍝ if not set use global setting
+              :If 0∊⍴t←varData⊂n0 ⍝ do we know this var?
+                  xml←'xml'≡getSetting'varfmt' ⍝ no, use global setting
+              :Else ⍝ yes, use last saved format
+                  xml←'xml'≡t.Format
+              :EndIf
+          :Else
+              xml←'xml'≡t←lCase xml
+              '-FORMAT=APL or XML only'⎕SIGNAL 911 if⍱/'xml' 'apl'∊⊂t
+          :EndIf
+          :Trap nosource←0
+              src←fnname xml ∆VCR ref⍎fnname
+              ref←ref fnname src
+          :Else
+              'Unable to create source for variable'⎕SIGNAL ERR+2
+          :EndTrap
+     
+      :Else ⍝ NS: we grab the source; if it does not exist we create one
+          :If nosource←0≡src←{16::0 ⋄ ⎕SRC ⍵}ref
+⍝ For the moment we bring in the code to convert the namespace
+              bringConvertCode
+⍝ Make sure the ref has a proper name
+              ref.⎕DF n0
+              :Trap 0 ⍝ there could be a number of reasons for this to fail
+                  :If ⍙BANNER≢v←0
+                      :If '⍎'=1↑v←⍙BANNER
+                          v←⎕FMT CRef⍎1↓v
+                      :EndIf
+                  :EndIf
+                  ref.⎕EX t if 9∊ref.⎕NC t←'SALT_Data' ⍝ in case we dealing with an ex SALTed ns
+                  src←(0 0 v fnname)⎕SE.Dyalog.Convert.ntgennscode src←ref
+⍝ Convert the namespace if required
+                  :If ⍙CONVERT
+                      ref←ref.##.⎕FIX src ⋄ nosource←0
+                  :EndIf
+              :Else
+                  'Unable to convert namespace'⎕SIGNAL ERR+3
+              :EndTrap
+          :EndIf
+      :EndIf
+     
+     ⍝ In 2013 we started saving program ⎕AT info after the script
+      t←⎕SE.SALTUtils.(SETTS SETCOMPILED) ⍝ is it turned on?
+      :If (∨/t)>1∊'/SALT/'⍷{s←'\'=v←⍵ ⋄ (s/v)←'/' ⋄ v}tgt ⍝ except for SALT
+          :If isFn
+              :If 3.1=ref[1].⎕NC⊂fnname
+                  ref[4]←⊂src,←ref[1]getTs,⊂fnname
+              :EndIf
+          :ElseIf ~isVar
+          :AndIf ~0∊⍴t←ref.⎕NL ¯3.1
+              src,←ref getTs t
+          :EndIf
+      :EndIf
+     
+      :Trap 0
+          {}makeDir⍣⍙MAKEDIR⌷pathOf t←tgt
+          ns←mergeTxt src
+          ns PutUTF8File t  ⍝ 't' used below if error
+⍝ do not update current file if not the latest version
+          :If (maxver≤⍙VERSION)∧tgt≢t←last
+              ns PutUTF8File t
+          :EndIf
+      :Else
+          msg←⎕DMX.Message
+          :If ⎕EN=90
+              msg←⎕EXCEPTION.Message
+          :EndIf
+          ('Unable to create file ',t,': ',msg)⎕SIGNAL 22
+      :EndTrap
+      →0 if nosource
+      SetDelta ref tgt ⍙VERSION({0::'' ⋄ ⍵.SALT_Data.GlobalName}ref)(3↑(3×xml)↓'aplxml')0
+     ⍝ End Save
+    ∇
+
+    ∇ {r}←bringConvertCode;t
+      :If r←0=⎕SE.⎕NC ¯6↓t←'Dyalog.Convert.CDate'
+      :OrIf r←0∊⎕SE.⎕NC t
+      :OrIf r←(⎕SE⍎t)≠100⊥3⍴⎕TS
+          'Dyalog'⎕SE.⎕NS'' ⍝ ensure parent there
+          ⎕SE.Dyalog.Convert←Load'[SALT]/lib/NStoScript -noname'
+          ⎕SE⍎t,'←100⊥3⍴⎕ts'
+      :EndIf
+    ∇
+
+    ∇ select←la SnapGetPatterns select;ex;ss;t;pat;objs;patterns
+    ⍝ Look at patterns
+      (objs patterns)←la
+      :If (∨/select)∧0≢patterns
+          ex←'~'∊1↑patterns   ⍝ are we reversing the behaviour?
+          ss←select/objs      ⍝ the strings (objects) to search
+          :If ∨/'?*'∊patterns ⍝ looking for a limited regex?
+             ⍝ Pattern holds the list of names or patterns, a la DOS, to Snap
+             ⍝ A pattern is assumed to be anchored at the beginning and end,
+             ⍝ '?' means "any character" and '*' means any sequence, e.g. A*B is ^A.*B$
+              t←'\?' '\*'⎕R'.' '.*'⊢patterns~'~' ⍝ turn limited regex (DOSlike) into full regex
+              pat←{⎕ML←3 ⋄ '$',⍨¨'^',¨(⍵≠' ')⊂⍵}t
+             ⍝ Find the list to process
+              select\←ex≠ss∊t←pat ⎕S'\0'⊢ss
+          :Else ⍝ simple case
+              select\←ex≠ss∊pat←{⎕ML←3 ⋄ (⍵≠' ')⊂⍵}patterns~'~'
+          :EndIf
+          :If ~∨/select
+              Warn'pattern',((1⌈2⌊⍴pat)⊃' does not' 's don''t'),' match any object'
+          :EndIf
+      :EndIf
+    ∇
+
+    ∇ nEw←objs newName ex;t;fr;to;b;tO;new;i
+     ⍝ Find a filename for objects; ex are the characters for ∆ and ⍙ (default ^ and =)
+      t←'0123456789abcdefghijklmnopqrstuvwxyz' ⋄ ex←ex,(⍴ex)↓'^=_'
+      fr←t,'àáâãåäèéêëæíîïìòóôõöøùúûüñþðßçÇABCDEFGHIJKLMNOPQRSTUVWXYZÀÁÂÃÅÄÈÉÊËÆÌÍÎÏÒÓÔÕÖØÙÚÛÜÐÝÑ∆⍙'
+      to←t,'aaaaaaeeeeeiiiioooooouuuunpdsccabcdefghijklmnopqrstuvwxyzaaaaaaeeeeeiiiioooooouuuudyn',ex
+      tO←t,'aaaaaaeeeeeiiiioooooouuuunpdscCABCDEFGHIJKLMNOPQRSTUVWXYZAAAAAAEEEEEIIIIOOOOOOUUUUDYN',ex
+      new←{to[fr⍳⍵]}¨objs ⋄ nEw←{tO[fr⍳⍵]}¨objs
+     ⍝ There may be names which will cause conflicts under OSs like Windows
+      b←((3↑¨new)∊'com' 'lpt')∨new∊'aux' 'con' 'nul' 'prn'
+      :If ∨/b←b∨{(⍳⍴⍵)≠⍵⍳⍵}new ⍝ take into account ALL names
+          new←new,¨i←b/¨'-',¨⍕¨b\⍳+/b
+          nEw←nEw,¨i
+      :EndIf
+    ∇
+
+⍝ With Save defined we write a Snap command like this:
+    ∇ names←{tref}Snap arg;AllObjs;allowed;b;body;clall;class;diff;difffn;diffvar;ex;excludelist;ext;file;files;fnames;fr;i;lx;makefn;name;nc;new;nr;nsn;objs;pat;Path;rec;refName;root;select;srcf;show;some;ss;Sw;t;to;tref;txt;unable;vov;vv;Warn;ws;⍙BANNER;⍙CLASS;⍙CONVERT;⍙ENCRYPT;⍙FILEPREFIX;⍙FORMAT;⍙LOADFN;⍙MAKEDIR;⍙NOPROMPT;⍙NOSOURCE;⍙PATTERNS;⍙SHOW;⍙VERSION;⍙∆⍙;nola;cancelled;r;list;withver;Q;Quote;using;refNameD;⎕PP;⍙CLEAN
+      :Access shared public
+      :If isHelp arg
+          r←'Snap [path] (default current workdir)' '' 'Save all new or modified SALT objects in path' '' 'Modifiers:'
+          r,←⊂'-class=       classes of objects to save (2 3 4 or 9) (*)'
+          r,←⊂'-clean        start with a clean slate, remove all tags first'
+          r,←⊂'-convert      convert namespaces into source form if necessary'
+          r,←⊂'-banner=      Add a banner at the top of each converted namespace'
+          r,←⊂'-fileprefix=  filename prefix of objects to snap'
+          r,←⊂'-format=      save variable in specific format (APL or XML)'
+          r,←⊂'-loadfn[=]    the path (default =arg) where to store the fn to rebuild the ws'
+          r,←⊂'-nosource     do not bring in the source of namespaces with the LOAD fn'
+          r,←⊂'-noprompt     skip confirmation prompt'
+          r,←⊂'-makedir      create any necessary folder'
+          r,←⊂'-show[=]      do not save, show what would be saved'
+          r,←⊂'-patterns=    patterns of objects to save (*)'
+          r,←⊂'-version[=]   version number to save'
+          r,←⊂'-∆⍙=          characters to use in filenames for objects having these characters'
+          r,←⊂'* Note: to exclude simply prefix with "~"'
+          names←⊃r
+          →0
+      :EndIf
+      Path←specialName fixFsep 1⊃1↑'-Banner= -Class∊ ~.,12439 -Clean -Convert -FilePrefix= -Format= -LoadFn[=] -MakeDir -NoPrompt -NoSource -Patterns= -Show[=] -Version[=] -∆⍙='∆parse arg'1SL'
+     
+      Warn←{⍺←'** WARNING: ' ⋄ ~0∊⍴⍵:⎕←⍺,⍵} ⍝ should this go to the status window?
+     
+      :If nola←0∊⎕NC'tref' ⍝ a left arg means we return 2 things: the names and their files
+          tref←CRef        ⍝ this is used when making recursive calls
+      :EndIf
+      :If 326≠⎕DR refName←tref ⍝ find the display forms (2, one with a dot) of the target reference
+          refNameD←'.',⍨refName ⋄ t←⍕tref←⍎refName ⋄ names←⍬(0 2⍴0)
+          nc←refName{'[Namespace]'≡nm←(n←+/∨\'.'=⌽⍵)↓⍵}t
+          Warn(nc<refName≢t)/'namespace ',refName,' is a reference to ',t
+      :Else
+          refNameD←'.',⍨refName←DF tref
+      :EndIf
+      unable←names←⍬ ⍝ return list of objects saved + files if la supplied
+     
+     ⍝ If the path ends with '=' we append the name of this ws
+      :If '='∊¯1↑Path
+          Path←(¯1↓Path),(-⊥⍨FS≠t)↑t←⎕WSID
+      :EndIf
+     
+     ⍝ Load program: the name of the pgm can be the same has its file whose path can be specified.
+      :If makefn←⍙LOADFN≢0
+          'Invalid ⎕LX: multiple lines in it'⎕SIGNAL 911 if 1<1↑⍴⎕FMT ⎕LX ⍝ could be a CR/NL embedded string
+          :If ⍙LOADFN≡1
+              ⍙LOADFN←Path
+          :EndIf
+          :If '='∊1↑⍙LOADFN  ⍝ if the name starts with '=' we prepend the Path
+              ⍙LOADFN←Path,1↓⍙LOADFN
+          :EndIf
+          :If isRelPath ⍙LOADFN
+              ⍙LOADFN←Path{⍺,(0=⍴⍺)↓FS,⍵}⍙LOADFN
+          :EndIf
+         ⍝ If the path contains a '+' it means we want to generate extended code
+          b←'+'∊⍙LOADFN
+          ⍙LOADFN←specialName fixFsep ⍙LOADFN~'+'
+        ⍝ The name of the file may be supplied with an extension:
+          ext←'' ⋄ name←'load_ws' ⍝ default
+          :If '.'∊2⊃t←FS splitLast ⍙LOADFN
+              ⍙LOADFN←1⊃t ⋄ (name ext)←'.'splitLast 2⊃t
+          :EndIf
+          ('Invalid load fn ',(1+t)⊃'name' 'extension')⎕SIGNAL 911 if(0>⎕NC name)∨t←~(⊂ext)∊'dyapp' '',⊂1↓SALTEXT
+          ⍙LOADFN←⍙LOADFN name ext b
+      :EndIf
+     
+      root←#=tref
+      excludelist←'Ûcmd' 'Ûargs' 'Ûriu' 'SALT_Data',root/⊂'SALT_Var_Data'
+     
+     ⍝ Find objects to snap. We allow ~ to precede the class selection to mean 'exclude'
+      ⍙CLASS←⍙CLASS{⍵:⍺~'~' ⋄ ⍺}ex←'~'∊⍙CLASS
+      class←⍙CLASS ∆default 2 3 4 9
+     ⍝ Expand to subclasses
+      allowed←∊t←2.1(3.1 3.2)(4.1 4.2)(9.1 9.4 9.5)
+     
+     ⍝ This version does not allow fn refs (Save won't have it) which are class 3.3
+     ⍝ If we are to produce a load fn and some objects won't be saved we tell the user:
+      :If makefn∧0<⍴b←(tref.⎕NL-2 3 4 9.2)~AllObjs←tref.⎕NL-allowed
+          Warn((⍕⍴b),' object',(1∊⍴b)↓'s of class ',⍕∪tref.⎕NC b),' won''t be dealt with'
+      :EndIf
+      AllObjs~←excludelist    ⍝ remove here
+      class←allowed∩class,∊(2 3 4 9∊class)/t
+      class←allowed~⍣ex⊢class ⍝ ~ means exclude
+     
+      {}makeDir⍣⍙MAKEDIR⊢Path ⍝ ensure there
+     
+      →0 if nola∧makefn<0=nr←+/select←AllObjs ⍙PATTERNS SnapGetPatterns(tref.⎕NC AllObjs)∊class
+     
+     ⍝ Clean the space first if necessary
+      :If ⍙CLEAN∧⍙SHOW≡0
+          {}0 cleanWS tref
+      :EndIf
+     
+     ⍝ AllObjs is the entire list of objects in the current ns (usually #)
+     ⍝ clall   is the class of each
+     ⍝ select  is the mask of selections
+     ⍝ unable  is the mask of objects unable to save (e.g. locked fn, or refs)
+     
+     ⍝ All the names we have now are of a valid class. Let's see which ones are different.
+     ⍝ We warn when some objects cannot be saved, for ex, some fns may be locked.
+      unable←b\{0∊⍴tref.⎕VR ⍵}¨AllObjs/⍨b←3.1=clall←tref.⎕NC AllObjs
+      :If ∨/select>←b←unable∧ss←select∨makefn
+          Warn'these fns are locked in ',refName,':',⍕b/AllObjs
+      :EndIf
+     ⍝ Some vars may be "unsavable":
+      :If ∨/vov←t←ss∧clall=2.1 ⍝ Valid Or Variable
+          (b vv)←↓⍉⊃{6::0 0 ⋄ 1(tref⍎⍵)}¨t/AllObjs ⍝ could be undefined (e.g. ⎕SVO)
+          unable∨←vov←t\~b
+      :AndIf ∨/b
+          unable∨←vov←vov∨t\b\valWithRef¨tref⍎¨b/t/AllObjs
+      :EndIf
+      select>←vov
+     
+     ⍝ Have any of these been modified or are new? A non-scripted ns will appear as new.
+     ⍝ Note that it is possible for a class not to have a script (e.g. a 'subform' is class that can be used as base to a class)
+      nr←diff←srcf←⍬
+      :If ∨/select
+          nr←select/AllObjs
+          :If ⍙CLEAN
+              diff←{1}¨srcf←{⍬}¨nr
+          :Else
+              difffn←{0∊⍴nr←fnData ⍵ ⍬:1 '' ⋄ (nr.CRC≢calcCRC remTag ⍵)nr.SourceFile}
+              diffvar←{0∊⍴nr←varData⊂⍵:1 '' ⋄ xml←'xml'≡nr.Format ⋄ (nr.CRC≢calcCRC ⍺ xml ∆VCR{1=≡⍵:⍎⍵ ⋄ ⊃⍎/⍵}⍵)nr.SourceFile}
+         ⍝ See if they are different - or new
+              (diff srcf)←↓⍉⊃(select/clall){2=cl←⌊⍺:⍵ diffvar tref ⍵ ⋄ 9≠cl:difffn tref.⎕NR ⍵ ⍝ var or pgm
+                  16::(1-2×⍺=9.4)'' ⋄ cc←calcCRC ⎕SRC t←tref.⍎⍵                               ⍝ ref CRC
+                  6::1 '' ⋄ (src crc)←t.SALT_Data.(SourceFile CRC)                            ⍝ old name & crc
+                  (crc≢cc)src}¨nr
+          :EndIf                                              ⍝ compare
+      :EndIf
+     
+      :If ∨/vov←(∨/select)∧vov∨select\~b←0≤diff
+          Warn'these objects cannot be saved in ',refName,':',⍕∪vov/AllObjs ⋄ select>←vov ⋄ (nr diff srcf)←b∘/¨nr(|diff)srcf
+      :EndIf
+     
+     ⍝ This is the list of all objects to process. Whether we do it depends on -show.
+      files←1 2⍴refName(srcf,⍪refNameD∘,¨nr)
+     
+      :If makefn⍱some←∨/diff  ⍝ anything to do?
+          →nola/0             ⍝ should we return the filenames too?
+          →0⊣names←names files
+      :EndIf
+     
+      show←⍙SHOW≢0 ⋄ cancelled←0
+     
+      Q←'''' ⋄ Quote←{Q,((1+⍵=Q)/⍵),Q}
+     
+      :If some∨⍙CLEAN
+     
+     ⍝ We found there were objects that need saving. We will put them back where they belong
+     ⍝ or we will put them in the path specified as argument.
+     ⍝ If a relative path was specified we assume it is in the current workdir.
+          :If isRelPath Path
+              Path←(⎕IO⊃getSetting'workdir')ClassFolder Path
+          :EndIf
+          Path←Path,(FS=¯1↑Path)↓FS,⍙FILEPREFIX~0
+          'Cannot Snap into SALT folder (use a different location)'⎕SIGNAL 911 if(⎕SE.SALTUtils.getEnvir'DYALOG'){⍺≡(⍴⍺)↑⍵}Path
+     
+          names←diff/select/AllObjs
+         ⍝ Find file names - replace chars in names which cause problems with the OS
+          :If ∨/new←' '∧.=¨fnames←diff/srcf ⍝ reuse these filenames; note empty ones
+            ⍝ Some objects are new and have no filename yet
+              fnames←AllObjs newName ⍙∆⍙ ∆default'%=' ⍝ we need to take them ALL into account
+              fnames←Path∘,¨new/diff/select/fnames,¨⊂SALTEXT ⋄ nc←⍴SALTEXT
+            ⍝ There is a chance those new names are still not unique:
+              t←{⍺,'.',⍵}/1 0 1/⊃splitName¨srcf ⍝ remove ver no if any
+              :While ∨/b←fnames∊t
+                  (b/fnames)←nc⌽¨(⍕¨⍳+/b),⍨¨(-nc)⌽¨b/fnames
+              :EndWhile
+              fnames←(fnames,(~new)/diff/srcf)[⍋⍒new] ⍝ reinsert old items in list
+              srcf[new/diff/⍳⍴diff]←new/fnames
+              files[1;2]←⊂srcf,0 1↓2⊃files[1;]
+          :EndIf
+         ⍝ We now have a filename for each object to be saved
+     
+          ss←⍙CONVERT<9.1=tref.⎕NC names ⍝ find scripted spaces to be written out
+          :If 1∊ss ⍝ find which ones are scripted
+              ss←ss\tref{0::1 ⋄ 0⊣⎕SRC ⍺⍎⍵}¨ss/names
+          :EndIf
+     
+         ⍝ We're all set. If we only SHOW we return the names right away.
+          :If show ⍝ names, ss, srcf and fnames are in sync
+             ⍝ If details requested show the filename where each object will end up
+              :If 'details'≡lCase⍕⍙SHOW
+                  fnames←⊃splitName¨diff/srcf ⍝ split into name, version, extension
+                  :If ∨/0 1∊b←⍙VERSION
+                      fnames[;2]←(ss<b∨×t)/¨⍕¨1+t←⍎¨'0',¨fnames[;2]
+                  :Else
+                      fnames[;2]←(~ss)/¨⊂⍙VERSION
+                  :EndIf
+                  fnames[;3]←(~ss)/¨fnames[;3]
+                  names←names,¨{' →',¯1↓(~'..'⍷⍵)/⍵}¨{⍺,'.',⍵}/fnames,'.'
+              :EndIf
+     
+          :Else  ⍝  ***  save and store the effective file name  ***
+              :If '⍎'∊1↑⍙BANNER
+                  ⍙BANNER←'⍎',refNameD,1↓⍙BANNER
+              :EndIf
+              Sw←∆propagate'VERSION NOPROMPT CONVERT BANNER FORMAT'
+              {}makeDir∘pathOf⍣⍙MAKEDIR⌷Path
+              rec←⍬
+              (fnames names)←(fnames names){⍺[⍵]}¨⊂⍋ss ⍝ we do the non-scripted folders last (makes life easier if user cancels)
+              :For i :In ⍳nc←+/~ss ⍝ we have to loop to trap Cancel appropriately
+                  :Trap 901 902
+                      names[i]←fnames[i]{⍵/⍨~0∊⍴1 Save refNameD,⍵,' "',⍺,'"',Sw}¨names[i]
+                  :Case 901
+                      names[i]←⊂'' ⋄ →EndFor⊣cancelled←1
+                  :Else
+                      names[i]←⊂''
+                  :EndTrap
+              :EndFor
+              :For i :In nc+⍳+/ss ⍝ non scripted nss here
+                  file←remExt i⊃fnames ⋄ name←refNameD,i⊃names
+                  rec,←1⊃t←name Snap file,Sw,' -makedir' ⍝ names and location are returned
+                  files⍪←2⊃t ⍝ this is a LIST of files, it must match the names
+                  files⍪←refName(1 2⍴file name)
+                 ⍝ We put the name of the namespace in the folder
+                 ⍝ We also put the system vars
+                  using←{(~0∊⍴⍵)/1⌽') (',⍕Quote¨⍵}name⍎'⎕using'
+                  t←1⌽')(⎕IO ⎕ML ⎕WX ⎕CT ⎕PP',(~0∊⍴using)/' ⎕USING' ⍝ ⎕RL skipped because of new format
+                  t←name,' ',t,'←',(⍕5↑name⍎t),using
+                  t PutUTF8File file,'/name.txt'
+                  →EndFor if cancelled←901=⎕EN   ⍝ did the user cancel while in Snap?
+              :EndFor
+     
+     EndFor:
+            ⍝ If the user cancelled we return what we've done so far
+              names←(refNameD∘,¨names[⍳nc⌊i-cancelled∧i≤nc]~⊂''),rec ⍝ 'i' was the loop counter
+              :If ~nola
+                  names←names files
+              :EndIf
+          :EndIf
+      :EndIf
+     
+⍝                            ****  Produce a program to reload the code here  ****
+      :If makefn>cancelled
+    ⍝ Produce a fn to reload the entire ns
+    ⍝ This may be impossible if the ns includes instances (e.g. GUI objects) or refs
+          t←((~root)/'namespace ',refName,' in '),'ws ',⎕WSID
+          body←0⍴ws←'⍝ This will recreate ',t,' as it was on',⍕'/:'{1↓⊃,/⍺,¨⍕¨⍵}¨↓2 3⍴⎕TS
+          ws←ws'Load←{''**''≡2↑⍕s←⎕SE.SALT.Load ⍵:⎕←s} ⍝ used to verify SALT.Load''s result'
+     
+    ⍝ We show the names of the objects we cannot bring back, if any, and limit the size of the lines to display to 90
+          :If 1∊unable                                       ⍝     90 is max width for display of objects names
+              body,←'' '⍝ These objects are not recreated:','⍝',¨⍕¨90 Fold unable/AllObjs
+          :EndIf
+          body,←root/''('#.(⎕IO ⎕ML ⎕WX ⎕CT ⎕PP)←',⍕#.(⎕IO ⎕ML ⎕WX ⎕CT ⎕PP))
+          body,←root/(~0∊⍴t)/'#.⎕USING←',⍕Quote¨t←⎕USING
+          body,←(~root)/⊂Q,refName,Q,' ⎕NS ',Q,Q
+          :If ⍙LOADFN[4]∧0<⍴t←root↓files[;1] ⍝ extended form?
+              ex←'' '' '⍝ Recreate the non scripted namespaces'
+              body,←1⌽ex,{(Q,⍵,''' ⎕NS ⍬ ⋄ ',⍵,'.(⎕IO ⎕ML ⎕WX ⎕CT ⎕PP)←',⍕1↓t),(~0∊⍴U)/' ⋄ ',⍵,'.⎕USING←',⍕Quote¨U←1⊃t←⍎⍵,'.(⎕using ⎕IO ⎕ML ⎕WX ⎕CT ⎕PP)'}¨t
+          :EndIf
+        ⍝ Discard extra file info if we're not in extended mode
+          b←~⍙LOADFN[4]
+          files←1↑⍣b⊢files ⍝ only the first row contains all names
+          Warn(b<⍙SHOW≢0)/'Loadfn program will be incomplete because the full snapping wasn''t done and filenames were not determined'
+     
+        ⍝ We could reuse fnames and names above but if -show was set they won't exist
+          (fnames objs)←↓⍉↑⍪/files[;2] ⋄ r←(∊1↑¨⍴¨files[;2])/files[;1] ⍝ 'r' is taRget
+    ⍝ We now have the entire list of objects, some may be non-scripted nss if we are NOT in extended mode in which
+    ⍝ case we keep only the names and leave Load the trouble of finding what's inside.
+          (fnames objs r)←(~objs∊files[;1])∘/¨(fnames objs r)
+     
+         ⍝ Find which version they are
+          :If 0<⍴files←remVerno¨t←remExt¨fnames⊣withver←⍬
+              files←files{'"',⍺,'"',(0<⍴⍵)/' -version=',⍵}¨ex←(1+⍴¨files)↓¨t ⋄ withver←0<↑,/⍴¨ex
+          :EndIf
+        ⍝ We have to order the Loads according to class (e.g. Interfaces first)
+          t←files
+          (files r objs nc withver)←tref reOrderLoads(files r objs withver)
+          ⍙LOADFN[4]∨←t≢files ⍝ will we have to use extended form? (yes if order has changed)
+          ⎕PP←17
+        ⍝ Add ⎕LX if not empty
+          :If ⎕LX≢lx←''
+              lx←root↓' ',⊂1⌽'''#⍎⎕LX←''',(1+⎕LX=Q)/⎕LX
+          :Else
+              Warn'⎕LX is empty'
+          :EndIf
+          (fr name ext ex)←⍙LOADFN
+          {}makeDir⍣(⍙MAKEDIR>show)⌷fr
+          :If (⊂ext)∊1↓¨SALTEXT'' ⍝ create a fn?
+              ex←((⍙NOSOURCE∧nc=9.1)/¨⊂' -source=no'),¨(withver<0≢⍙VERSION)/¨⊂' -version=',⍕⍙VERSION
+              'to'⎕NS'' ⋄ t←(12{(⍺×⌈(⍴⍵)÷⍺)↑⍵}¨files,¨ex,¨' -target='∘,¨r,¨Q),¨' ⍝ '∘,¨objs
+             ⍝ There is no point switching to another space with ⎕CS because ASA we are out of the program it will be lost
+              {}÷name≡t←to.⎕FX(⊂name,';Load'),ws,body,('Load '''∘,¨t),(root/' ',⊂'⎕WSID←''',⎕WSID,Q),lx
+              :If show
+                  ⎕←to.⎕VR name
+              :Else
+                  {}Save'to.',name,' ',fr{⍺,(⍺∧.=' ')↓⍵}FS,name,' -noprompt -makedir'
+              :EndIf
+          :ElseIf ext≡'dyapp' ⍝ create a boot file
+              t←remVerno∘remExt¨files
+              txt←('Load '∘,¨files),(⊂1⌽'''Run ⎕cs # ⋄ ⎕wsid←''',⎕WSID),'Run '∘,¨lx
+              :If show
+                  ⎕←⊃txt
+              :Else
+                  (mergeTxt txt)PutUTF8File fr,FS,name,'.dyapp'
+              :EndIf
+          :EndIf
+      :EndIf
+     ⍝ End Snap
+    ∇
+
+      baseClass←{11 3::⍺ ⋄ bc←2 1⊃⎕CLASS ⍵
+          bc←bc/⍨{0::0 ⋄ ⍵≡⍎⍕⍵}¨bc
+          ⍺,bc}
+
+    ∇ (files target objs nc wv)←tref reOrderLoads(files target objs wv);nc;b;list;t;class;norel;remove;cl0
+    ⍝ The order in which the classes are loaded is important.
+    ⍝ Classes that depend on other classes either because they are derived from them or because
+    ⍝ they reference them through the :Signature statement must be loaded AFTER those referenced classes.
+     
+      :If ~0∊⍴objs⊣nc←⍬
+      :AndIf ∨/b←9.4=nc←⎕NC objs
+        ⍝ We must also take :Signature into account
+          list←{'[]←'~⍨∊'^ *:Signature (\S+ *←)? *\S+ *(.*)$'⎕S',\1,\2'⎕OPT 1⊢⎕SRC ⍵}¨cl0←class←⍎¨b/objs
+          list←tref.{0∊⍴⍵:⍬ ⋄ ⎕ML←3 ⋄ e←{(+/∧\' '=⍵)↓⍵}¨((⍵≠',')⊂⍵)~⊂''
+              ⊃,/{{6::⍬ ⋄ ⍎⍵}(⍵⍳' ')↑⍵}¨e}¨list
+          list←list baseClass¨class
+        ⍝ We now have all that is required for each class to be defined
+          t←⍬
+          :Repeat
+              t,←remove←class/⍨norel←{0∊⍴⍵}¨list
+              'circular reference: unable to create load fn'⎕SIGNAL 11↓⍨1∊norel
+              (class list)←(~norel)∘/¨class list
+          :Until 0∊⍴list←list~¨⊂remove
+          (files objs target nc wv)←(files objs target nc wv)⌷¨⍨⊂⊂⍋b\t⍳cl0
+      :EndIf
+    ∇
+
+    ∇ {r}←RemoveVersions name;allver;b;cf;fc;folder;last;list;t;v;⍙ALL;⍙COLLAPSE;⍙NOPROMPT;⍙VERSION;⎕TRAP
+      :Access Shared Public
+     
+      :If isHelp name
+          r←'RemoveVersions filename' '' 'Remove one or more versions in the SALT file system' '' 'Modifiers:'
+          r,←⊂'-version=   Specific version(s) to delete'
+          r,←⊂'-collapse   Keep and renumber the LAST file if needed'
+          r,←⊂'-all        Remove ALL versions'
+          r,←⊂'-noprompt   do not ask for confirmation'
+          r←⊃r ⋄ →0
+      :EndIf
+      ⎕TRAP←_TRAP
+      name←fixFsep 1⊃'-version= -all -collapse -noprompt'∆parse name'1L'
+      v←+/0≢¨⍙ALL ⍙VERSION
+      ('You must specify ',(5×2>v)↓'only one of VERSION or ALL')⎕SIGNAL 911 if 1≠v
+      fc←∊ ⍝ versions must be in the set specified
+     
+      :If cf←∨/'<≤≥>'=t←1↑⍙VERSION←rlb ⍙VERSION
+          fc←⍎t ⋄ ⍙VERSION↓⍨←1
+      :EndIf
+      :If v←0∊b←'-'≠t←⍙VERSION
+          fc←{(⍺≥1↑⍵)∧⍺≤1↓⍵} ⋄ ⍙VERSION←b\b/t
+      :EndIf
+      'too many versions supplied'⎕SIGNAL 911 if(cf∨v)∧(2-cf)≠⍴⍙VERSION←num ⍙VERSION
+     
+      folder←2⊃(name,'*')locateIn getSetting'workdir'
+      name←2⊃FS splitLast name
+      allver←{⍵[⍋⍵]}folder ListVersions name
+      'Object not found'⎕SIGNAL(⍴allver)↓922 ⍝ object not there
+      'NO version found to delete'⎕SIGNAL 922 if 0∊⍴⍙VERSION←(b←⍙ALL∨allver fc ⍙VERSION)/allver
+     
+    ⍝ Find if collapsing required
+      ⍙COLLAPSE∧←¯1↑b
+     
+⍝ If collapsing the last version won't do anything we ignore it:
+      :If ⍙COLLAPSE∧(t←⌈/allver)=1+last←⌈/0,allver~⍙VERSION
+          ⍙COLLAPSE←0 ⋄ ⍙VERSION~←last←t
+      :EndIf
+      r←Forget folder name ⍙VERSION ⍙COLLAPSE last ⍙NOPROMPT
+    ∇
+
+    ∇ r←command merge arguments;b;na;pos;t
+⍝ Put arguments in command string where %n is specified
+      na←⍴t←,⊂⍣(1≡≡t)+t←,arguments
+      arguments←t{⍵,⍺,⍵}¨⊂WIN⍴'"'
+      :If na=+/t←'%'=command ⍝ any % specified?
+⍝ We accept simple % (no n after) or %⍳na (they must ALL be there)
+          pos←(¯1⌽t)/command
+      :AndIf ∨/b b←(na,0)=⍴pos~na↑1↓⎕D
+          (t/command)←arguments[⍋⍋b×⎕D⍳pos]
+          r←∊(b⍲¯1⌽t)/command
+      :Else
+          r←1↓⍕command arguments
+      :EndIf
+    ∇
+
+    ∇ r←Compare name;cmd;ext;files;fmt;folder;i;isns;isvar;list;max;n;names;namex;new;nf;nsi;old;o1;s;text1;text2;tmp;v;wsver;⍙PERMANENT;⍙SYMBOLS;⍙TRIM;⍙VERSION;⍙USING;⍙ZONE;⎕TRAP;cs;compare;xml;object
+      :Access Shared Public
+     
+      :If isHelp name
+          r←'Compare file1 [file2]' '' 'Compares 2 scripts or 2 versions of a script' '' 'Modifiers:'
+          r,←⊂'-version=n       compare version n to current (ws=workspace version)'
+          r,←⊂'-version=n1,n2   compare version n1 to n2 (if n<0 means max-n)'
+          r,←⊂'-using=          to specify the EXE to use'
+          r,←⊂'-permanent       to remember the EXE to use in the future'
+          r,←'' 'If no external program is used the following modifiers are accepted:'
+          r,←⊂'-window=         the number of lines to show before and after differences (default 2)'
+          r,←⊂'-trim            trim ends prior to compare'
+          r,←⊂'-symbols=        use these 2 symbols for delete and insert'
+          r←⊃r ⋄ →0
+      :EndIf
+     
+      ⎕TRAP←_TRAP ⋄ r←0 0⍴''
+      →0 if 0∊⍴names←'-version= -using= -permanent -window= -trim -symbols='∆parse name'2SL'
+      names←fixFsep¨names
+      ⍙USING ∆default←getSetting'compare'
+      wsver←'ws '≡3↑v←rlb lCase⍕⍙VERSION ⍝ there may be a version AFTER 'ws'
+      ⍙VERSION←wsver{⍺:(2∊⍴,⍵)↓⍵ ⋄ ⍵}⍙VERSION ∆default 0
+     
+⍝ If we specify -version=ws we can also specify an object name instead of a filename
+⍝ or prepend a dot before the name. In that case we use its sourcefile (experimental).
+      :If wsver∨nf←'.'=1↑s←1⊃names             ⍝ is this the name of the object?
+          wsver>←nf ⋄ s←nf↓s
+          nsi←CRef
+          :If 9=nsi.⎕NC s,'.SALT_Data'       ⍝ is it a SALTed space?
+              object←v←nsi⍎s
+              names←,⊂v.SALT_Data.SourceFile ⍝ this is its source file
+          :ElseIf ~0∊⍴nf←fnData(nsi.⎕NR s)s  ⍝ is it a SALTed fn?
+              names←,⊂nf.SourceFile
+          :ElseIf ~0∊⍴nf←varData⊂nsi s       ⍝ or a SALTed var?
+              xml←nf.Format≡'xml' ⋄ names←,⊂nf.SourceFile
+          :EndIf                             ⍝ otherwise must be a filename
+      :EndIf
+      'too many files/versions'⎕SIGNAL 911 if∨/(2-wsver)<(⍴names),⍴,⍙VERSION
+     
+      :If ⍙PERMANENT
+          'compare'saveSettings ⍙USING
+      :EndIf ⍝ replace in registry
+     
+      nf←⍴files←names
+      fmt←{folder,FS,name,((0<⍵)/'.',⍕⍵),'.',ext}
+     
+    ⍝ Find the file(s) and its versions
+      :For i :In ⍳nf
+          (folder name)←FS splitLast i⊃names ⋄ (name v ext)←splitName name
+          namex←name,'.',ext ⍝ remove verno, if any
+          :If i=1
+              o1←name
+          :EndIf
+          folder←(getSetting'workdir')ClassFolder¨⊂folder
+          n←1⍳⍨×,⊃⍴¨v←folder ListVersions¨⊂namex ⍝ look in each folder
+          (namex,' not found')⎕SIGNAL 22 if n>⍴v
+          (folder v)←n⊃¨folder v ⋄ max←⌈/v←{⍵[⍋⍵]},v
+          :If 1=nf  ⍝ only 1 file specified?
+                 ⍝ 0, 1 or 2 version #s may have been specified; 0 means the last version.
+                 ⍝ If 0 or 1 we assume comparison is to be made between its predecessor and V
+              (old new)←v{2∊⍴⍵:⍵ ⋄ ¯2↑(v⍳⍵)↑v}max{⍵+⍺×⍵≤0}⍙VERSION
+              ('Version not found for ',namex)⎕SIGNAL(∧/(wsver↓old,new)∊v)↓22
+              ('Versions are the same')⎕SIGNAL 911 if wsver<old=new
+              files←fmt¨old new
+          :Else
+              new←max{⍵+⍺×⍵≤0}i⊃2⍴⍙VERSION
+              ('Version not found for ',namex)⎕SIGNAL(new∊v)↓22
+              files[i]←⊂fmt new
+          :EndIf
+      :EndFor
+     
+      :If (wsver∨'apl'≡lCase ⍙USING)∨' '∧.=⍙USING
+          :If 9≠⎕NC(cs←'⎕se.Dyalog'),'.compare'
+              cs ⎕NS''
+              Load'[SALT]/tools/code/compare -target=',cs
+          :EndIf
+          compare←⎕SE.Dyalog.compare
+          compare.ZONE←⍙WINDOW ∆default 2 ⋄ compare.DELINS←2↑'→',⍨' '~⍨⍙SYMBOLS ∆default'-+'
+          text2←splitOnNL 2⊃files ⋄ name←⍴isns←isvar←0
+          :If wsver
+⍝ NOTE: the comparison is reversed for objects in the ws:
+⍝ we compare the ws version TO the one on file
+              :If isvar←isns←':⍝ '∨.=1↑n←rlb 1⊃text2 ⍝ is this a namespace (as opposed to a fn)?
+                  :If 0=⎕NC'object' ⍝ we were given a filename as arg and object is not defined
+                      object←nsi⍎{t↑⍨¯1+⌊/':⍝'⍳⍨t←t↓⍨' '⍳⍨t←t⊃⍨1⍳⍨':'=∊1↑¨t←rlb¨⍵}text2
+                  :EndIf
+                  text1←⎕SRC object ⋄ name←⍕DF object
+              :ElseIf isvar←'⌷'=1↑n ⍝ var?
+                  :If 0=⎕NC'xml'
+                      xml←{1≡≡⍵:0 ⋄ 1∊⍴⍵:0 ⋄ '<'∊1↑2⊃⍵}text2
+                  :EndIf
+                  text1←name xml ∆VCR nsi⍎name←1↓(¯1+n⍳'←')↑n
+                  :If xml
+                      text1←(⎕UCS 10)split⍨text1~CR
+                  :Else
+                      text1←,⊂text1
+                  :EndIf
+              :Else
+⍝ We must find the name of the fn to compare to
+                  'tmp'⎕NS'' ⋄ name←tmp.⎕FX text2
+                  text1←remTag nsi.⎕NR name
+              :EndIf
+          :Else
+              text1←splitOnNL o1←1⊃files
+          :EndIf
+          :If ⍙TRIM
+              (text1 text2)←rlb∘rtb¨¨text1 text2
+          :EndIf
+          r←(wsver+1)⊃o1(('function' 'variable' 'space'⊃⍨isvar+isns+1),' <',(rtb name),'> in the ws')
+          r←'Comparing ',r,CR,'     with ',(wsver/'the one in '),2⊃files
+          r←r,,CR,{0∊⍴⍵:'(they are the same)' ⋄ ⍵}text1 compare.compecv text2
+      :Else
+          cmd←{(⍴⍵)>p←⍵⍳']':(p↑⍵)ClassFolder p↓⍵ ⋄ ⍵}⍙USING
+        ⍝ If the command contains % file placeholder use them
+          cmd←cmd merge files
+          ⎕CMD cmd'Normal'
+      :EndIf
+     ⍝ End Compare
+    ∇
+
+⍝ List command
+⍝ Specs:
+⍝ List [\root]path[\filter]
+⍝ If a root is supplied we use that instead of the current workdir setting
+⍝ If a filter is given then path is a folder and the filter is used for filenames
+⍝ and any recursive call will include the same filter
+⍝ If no filter is given then path may mean a folder with filter * or a folder followed by a filename
+
+    ∇ r←List arg;b;d;dirs;es;EXT;f;files;filter;folder;f0;hasver;i;isfilter;lc;ls;m;recur;remext;rpf;t;tie;tiedalready;ver;wf;⍙EXTENSION;⍙FOLDERS;⍙FULL;⍙RAW;⍙RECURSIVE;⍙TYPE;⍙VERSIONS;⎕TRAP
+      :Access Shared Public
+     
+      :If isHelp arg
+          r←'list [path]' '' 'By default show all .dyalog files found in a path (default current workdir)' '' 'Modifiers:'
+          r,←⊂'-full[=1|2]     =1 (or no value) shows full pathnames below first folder found or below ROOT'
+          r,←⊂'                =2 returns full "rooted" names.'
+          r,←⊂'-recursive      Recurse through folders (implies -full)'
+          r,←⊂'-versions       List versions'
+          r,←⊂'-folders        Only list folders'
+          r,←⊂'-raw            Return unformatted date and version numbers'
+          r,←⊂'-type           Show the type for functions and spaces (slower)'
+          r,←⊂'-extension[=]   Specify which extension to look for (all=*) instead of .dyalog'
+          r←⊃r ⋄ →0
+      :EndIf
+     
+      ls←{⍵≡'*':'a'Dir ⍺,FS,⍵ ⋄ ('ad'Dir ⍺,FS,'*'),¨'af'Dir ⍺,FS,⍵,EXT}  ⍝ list fn
+      lc←lCase⍣WIN
+     
+      :If recur←2=≡arg
+          (folder filter ⍙FULL ⍙RECURSIVE ⍙VERSIONS ⍙RAW ⍙FOLDERS ⍙TYPE EXT)←arg ⍝ Internal call
+          files←folder ls filter
+      :Else
+⍝ Initial call goes thru here. We accept (folders\)*(name∣filter)
+          ⎕TRAP←_TRAP ⍝ ⍕ on next line is to ensure character otherwise could be ⍬
+          f←⍕fixFsep 1⊃1↑'-full[∊]12 -recursive -versions -folders -raw -type -extension[=]'∆parse arg'1SL'
+          ⍙FULL←num ⍙FULL
+          :If FS=¯1↑FS,rpf←remExt f←(-FS=¯1↑f)↓f ⍝ drop last \ if any and check name not empty
+              rpf←f ⍝ this is a name like ".../folder/.svn" starting with a dot
+          :EndIf
+          (folder filter)←FS splitLast rpf
+     
+         ⍝ Which EXTension to use
+          EXT←lc{⍵↓⍨=/2⍴⍵}'.',(0 1⍳⊂t)⊃SALTEXT'*'(t←⍙EXTENSION)
+     
+⍝ The arg can be 1:/.../dir (all is listed), 2:/.../name (name only) 3:/.../nam* (all nam... only)
+⍝ The easiest way to do it is to list the folder and look for filter as a dir
+     
+          isfilter←∨/'?*'∊filter ⋄ wf←getSetting'workdir'
+          :If ~isRelPath rpf ⍝ rooted?
+              wf←⊂folder ⋄ filter←rpf←(1+⍴folder)↓rpf
+          :EndIf
+⍝ If a filter is supplied we know the path is in 'folder'. If not we need to figure out
+⍝ if 'filter' is a filename (in which case we're all set to proceed) or another folder
+⍝ in which case we need to fetch all the files in it.
+          (f0 folder files)←(rpf,'*')locateIn wf
+⍝ If this was a folder we need to call Dir once more to get the files
+          t←lc¨4⊃files                ⍝ caseless for Windows
+          :If 1∊b←t∊⊂lc filter        ⍝ our name is there?
+          :AndIf (b⍳1)⊃1⊃files        ⍝ and it's a folder?
+              t←(0<⍴filter)/FS,filter
+              files←'a'Dir folder,t,FS,filter←'*'
+              folder,←(~isfilter)/t
+          :EndIf
+      :EndIf
+     
+      folder,←FS ⋄ es←⊂''
+      d←⎕IO⊃files ⍝ dir, ts, size, name
+      dirs←(⊂'<DIR>'),(es,d⌿⊃[1]files)[;5 1 1 3]
+      dirs[;2]←folder∘,¨dirs[;2]
+      dirs←↓dirs
+      filter,←(0∊⍴filter)/'*'
+      :If ⍙RECURSIVE∧0<t←⍴dirs ⍝ do NOT enter if t=0
+          r←⍬ ⋄ ⍙FULL⌈←1
+          :For i :In ⍳t
+              r←r,dirs[i],List(i 2⊃dirs)filter ⍙FULL ⍙RECURSIVE ⍙VERSIONS ⍙RAW ⍙FOLDERS ⍙TYPE EXT
+          :EndFor
+          dirs←r
+      :EndIf
+      files←(es,(⍙FOLDERS⍱d)⌿⊃[1]files)[;1 5 1 4 3]
+      files,←files[;2] ⍝ grab a copy of the names
+      :If remext←'.*'≢EXT
+          files←(EXT∘≡∘lc¨(-⍴EXT)↑¨files[;2])⌿files ⍝ keep those with the wanted extension
+          files[;2]↓⍨←-⍴EXT ⍝ remove extension
+      :EndIf
+      :If 0<1↑⍴files
+          :If remext ⍝ if the extension is kept we display all files as they are
+              files[;2 3]←⊃{(∧/b)<∧/⎕D∊⍨⍵↑⍨n←-⊥⍨b←'.'≠⍵:((n-1)↓⍵)(n↑⍵) ⋄ ⍵''}¨files[;2] ⍝ split version off name
+          :EndIf
+          :If 1<1↑⍴files
+              files←files[⍒⊃files[;5];]  ⍝ Desc by timestamp
+              files←files[⍋⊃files[;2];]  ⍝ Asc by name
+          :EndIf
+⍝ If -versions is supplied we show the versioned files wo their unversioned ones
+          b←0≠∊⍴¨files[;3] ⍝ versioned files
+          :If ⍙VERSIONS    ⍝ keep the versioned files for those versioned ones
+              f←b∨~t∊∪b/t←files[;2] ⍝ or those wo versions
+          :Else ⍝ record the NUMBER of versions as a negative value
+              files[f/⍳⍴f;3]←{0=⍵:'' ⋄ ⍵}¨-+/¨b⊂⍨f←{⍵≢¨¯1↓0,⍵}lCase¨files[;2]
+          :EndIf
+          files←f⌿files ⍝ remove unwanted versions
+⍝ If -type was specified we read the first few bytes of each file to figure out
+⍝ what kind of file it is. We do this AFTER removing versions to minimize disk access.
+          tiedalready←⎕NNUMS ⋄ files[;⍙TYPE/1]←'?' ⋄ files[;6 2]←folder∘,¨files[;6 2]
+          :For f :In ⍳⍙TYPE×1↑⍴files
+              :Trap 24 25 ⍝ file tied already?
+                  tie←files[f;6]⎕NTIE¨0 ⋄ t←⎕NREAD tie,83 22 0 ⋄ ⎕NUNTIE(tie∊tiedalready)↓tie
+                  :If ¯17 ¯69 ¯65≡3↑t      ⍝ UTF-8 files header?
+                      t←{11 92::∇ ¯1↓⍵ ⋄ 'UTF-8'⎕UCS ⍵}256|3↓t
+                  :ElseIf ¯1 ¯2≡2↑t        ⍝ UCS-2 files header?
+                      t←⎕UCS 163 ⎕DR 2↓t   ⍝ must be even length
+                  :EndIf
+                  files[f;1]←⊂'Fn'
+                  :If (1↑m←2↑⎕AV[⍳5]rlb t~1⍴⎕AV)∊' ⍝:'
+                      files[f;1]←⊂'Space'
+                  :AndIf ':'∊1↑m ⍝ can we be more specific?
+                      files[f;1]←(6⍴'If' 'Cl' 'Ns')['ICNicn'⍳m[2]]
+                  :EndIf
+                  :If '⌷'=1↑m
+                      files[f;1]←⊂'Var'
+                  :EndIf
+              :EndTrap
+          :EndFor
+      :EndIf
+      files←0 ¯1↓files ⍝ remove real filename
+     
+      r←(↓files),dirs
+     
+      :If ~recur ⍝ finalize result
+          r←⊃r
+          :Select ↑⍙FULL
+          :Case 1
+              r[;2]←(1+⍴specialName f0)↓¨r[;2]
+          :Case 0
+              r[;2]←{2⊃FS splitLast ⍵}¨r[;2]
+          :EndSelect
+          :If ⍙FOLDERS
+              r←r[;,2] ⍝ when displaying folders we only get 1 column and no header
+          :ElseIf ~⍙RAW
+              r[;5]←↓fmtDate⊃r[;5]
+              r[;3]←fmtVersion¨r[;3]
+              r←'Type' 'Name'('Version',⍙VERSIONS↓'s')'Size' 'Last Update'⍪r
+          :EndIf
+      :EndIf
+     ⍝ End List
+    ∇
+
+    ∇ r←PrepareClass;s
+      :Access shared
+      r←ResetSettings''
+⍝ Check the files needed: SALT (OK), SALTUtils (OK) and Parser + Utils:
+      :If 9≠⎕SE.⎕NC s←'Parser'
+          (BootPath'')BootLib s
+      :EndIf
+      :If 9≠⎕SE.⎕NC s←'Dyalog.Utils'
+          (BootPath'')BootLib s
+      :EndIf
+    ∇
+
+    ∇ prev←ResetSettings arg;i;s;⎕TRAP;lineof;special;sd;wd
+      :Access shared
+      prev←0 2⍴''
+      ⎕TRAP←0 'E' '→0' ⍝ in case SALTUtils not included
+      lineof←SettingsTable[;1]∘⍳
+      'unknown setting'⎕SIGNAL 911 if 0∊⍴i←i/⍳⍴i←(0∊⍴arg)∨(⍳1↑⍴SettingsTable)=lineof⊂arg←arg~' '
+      prev←SettingsTable[i;1 5]
+      special←i∊lineof'workdir' 'cmddir'
+      SettingsTable[i;5]←special{specialName⍣⍺⊢⍵}¨regSetting¨↓SettingsTable[i;3 4],0 ⍝ cannot be empty
+      '⎕se.Dyalog.Callbacks'⎕NS'' ⍝ make sure it is there
+     ⍝ We reset these even if they were not requested to be
+      ⎕SE.SALTUtils.ConfirmEdit←∨/'1yY'∊5⊃SettingsTable[lineof⊂'edprompt';]
+      ⎕SE.SALTUtils.DEBUG←¯1+'01'⍳⍬⍴5⊃SettingsTable[lineof⊂'debug';]
+      ⎕SE.SALTUtils.SETTS←∨/' atinfo '⍷s←1⌽'  ',5⊃SettingsTable[lineof⊂'track';]
+      :If ∨/' new '⍷s
+          wd←5⊃SettingsTable[lineof⊂'workdir';]
+          :If ((⍴sd)↑wd)≢sd←getEnvir'SALT' ⍝ find folders; we accept the "old" OS delimiters for backwards compatibility
+              ⎕SE.SALTUtils.NewObjectsFolder←wd[⍳¯1+⌊/wd⍳PATHDEL] ⍝ 1st dir is the one we use
+          :Else
+              (5⊃SettingsTable[lineof⊂'track';])←¯1↓1↓'new'⎕R''⊢s
+          :EndIf
+      :EndIf
+    ∇
+
+    PrepareClass  ⍝ touch-up
+
+    ∇ r←getSetting s;b
+      r←5⊃SettingsTable[SettingsTable[;1]⍳⊂s;]
+      :If ∨/b←'track' 'cmddir' 'workdir'∊⊂s
+          r←r splitOn(-1↑b)↓PATHDEL  ⍝ split track on ∘ only
+      :EndIf
+    ∇
+
+    ∇ r←Settings arg;add;empty;i;k;names;new;old;pairs;rem;set;val;valid;vars;⍙PERMANENT;⍙PREPEND;⍙REMOVE;⍙RESET;⎕TRAP;cw;⎕IO;prevval;msg;ACN
+      :Access Public Shared
+      ⎕IO←1
+      :If isHelp arg
+          r←'Settings [Name [Value]]' '' 'Set and returns the [new] settings' '' 'Modifiers:'
+          r,←⊂'-permanent      sets  permanently'
+          r,←⊂'-reset          loads permanently saved values'
+          r,←'' 'The possible settings are:' ''
+          r,←↓⍕SettingsTable[;1 2]
+          r←⊃r ⋄ →0
+      :EndIf
+      ⎕TRAP←_TRAP
+      pairs←{(1⌈⍴⍵)↑⍵}'-permanent -reset'∆parse arg'2SL'
+      names←SettingsTable[;1]
+      valid←0<i←names strIndex pairs[1]←lCase¨pairs[1]
+      'Invalid setting'⎕SIGNAL 911 if valid⍱empty←0∊⍴↑pairs
+      '-Permanent and -Reset are mutually exclusive'⎕SIGNAL 911 if ⍙PERMANENT∧⍙RESET
+      pairs[valid/1]←names[valid/i] ⍝ restore to full length if it wasn't
+      :If ⍙RESET
+          r←prevval←ResetSettings 1⊃pairs ⋄ →empty/0
+      :EndIf
+     
+      :If 1=⍴pairs
+          i←(i~0),empty/⍳1↑⍴SettingsTable ⍝ all or only a specific value
+          r←SettingsTable[i;1 5]   ⍝ return specific value
+          :If empty⍱⍙RESET
+              prevval←2⊃,r
+          :EndIf
+      :Else ⍝ set it
+          (set val)←pairs ⋄ old←5⊃SettingsTable[i;]
+          :Select set
+          :CaseList cw←'cmddir' 'workdir' ⍝ special treatment for folders; expand [ENVVARS], account for ';'s
+              new↓⍨←∨/(add rem)←',~'=1↑new←val
+            ⍝ maybe use: add←⍙PREPEND ⋄ rem←⍙REMOVE ⋄ new←val
+            ⍝ Perform minimal validation on paths
+              new←fixBRname new  ⍝ look for [NAMES] and replace them
+              'invalid path specified (cannot contain [ or ])'⎕SIGNAL 922 if∨/'[]'∊new
+     
+              val←{⍵/⍨' '∨.≠¨⍵}new splitOn PATHDEL    ⍝ split names that need to be and remove empties
+              :If add
+                  val←∪val,old splitOn PATHDEL        ⍝ side-effect: new path moved ahead
+              :ElseIf rem
+                  val←val~⍨old splitOn PATHDEL
+              :EndIf
+              val←val,(0∊⍴val)/SettingsTable[i;4]
+     
+            ⍝ The new workdir cannot be SALT if we are tracking new objects
+              :If cw[2]≡⊂set
+              :AndIf (⊂'new')∊getSetting'track'
+                  msg←'SALT workdir cannot be set while tracking new objects'
+                  msg ⎕SIGNAL 911 if k≡(⍴k←getEnvir'SALT')↑new
+              :EndIf
+              val←↑{⍺,'∘',⍵}/val ⍝ merge paths USING JOT (∘), NOT ; or :, this is SALT's delimiter not the OS'
+          :Case 'newcmd'
+              'new commands must be detected AUTO[matically] or MANUAL[ly]'⎕SIGNAL 911↓⍨∨/'auto' 'manual'≡¨⊂val←lCase val
+          :Case 'edprompt'
+              val←⍕⎕SE.SALTUtils.ConfirmEdit←∨/'1yY'∊val
+          :Case 'debug'
+              val←⍕⎕SE.SALTUtils.DEBUG←{∨/'yY'∊⍵:1 ⋄ +/2⊃⎕VFI ⍵}val
+          :Case 'mapprimitives'
+              val←⍕∨/'1yY'∊val
+          :Case 'varfmt'
+              'Variables storing format can only be APL or XML'⎕SIGNAL 911↓⍨∨/'apl' 'xml'≡¨⊂val←lCase val
+          :Case 'track'
+              new←new↓⍨∨/(add rem)←',~'=↑new←lCase val
+              val←{⍵/⍨' '∨.≠¨⍵}new splitOn' ,∘' ⍝ split features that need to be and remove empties
+              ACN←'atinfo' 'compiled' 'new'     ⍝ the order is important
+              msg←'. Choose from ',↑{⍺,', ',⍵}/ACN
+              msg←msg,⍨'Invalid track setting: ',¯1↓⍕val/⍨k←~val∊ACN
+              msg ⎕SIGNAL 911 if∨/k
+              :If add
+                  val←∪val,old splitOn'∘'       ⍝ side-effect: moved ahead
+              :ElseIf rem
+                  val←val~⍨old splitOn'∘'
+              :EndIf
+              'TS tracking not available in this version'⎕SIGNAL 911 if FTS<val∊1↑ACN
+     
+             ⍝ Check that 'new' has a valid working folder to work with
+              :If (⊂'new')∊val
+                  ⎕SE.SALTUtils.NewObjectsFolder←''
+                  msg←'The current workdir is SALT and new objects cannot be stored there, change it first'
+                  msg ⎕SIGNAL 911 if(⊂set←1⊃getSetting'workdir')∊(getEnvir'SALT')'[SALT]'
+                  ⎕SE.SALTUtils.NewObjectsFolder←set
+              :EndIf
+              ⎕SE.SALTUtils.(SETTS SETCOMPILED)←ACN[⍳2]∊val
+              val←↑{⍺,'∘',⍵}/val,(0∊⍴val)/⊂'' ⍝ merge all
+          :EndSelect
+          prevval←i⊃SettingsTable[;5]
+          SettingsTable[i;5]←⊂val
+          r←SettingsTable[i;1 5]
+      :EndIf
+     
+      :If ⍙PERMANENT
+          saveSettings/r
+      :EndIf
+      :If ~empty
+          r←prevval ⍝ return previous value
+      :EndIf
+     ⍝ End Settings
+    ∇
+
+    ∇ r←Clean Args;t;ref;⍙DELETEFILES
+    ⍝ Remove SALT tags from the objects
+      :Access Public Shared
+      :If isHelp Args
+          r←'Clean [namespace]' '' 'Cleanup namespace by removing all SALT tags in objects recursively.'
+          r,←'Default is current namespace' '' 'Modifiers:' '-deletefile(s)  remove also files associated with tagged objects'
+          r←⊃r ⋄ →0
+      :EndIf
+     
+      ref←CRef
+      :If 9∊ref.⎕NC t←⍕'-deletefile(s)'∆parse Args'1S'
+          ref←ref⍎t
+      :EndIf
+      r←⍕⍙DELETEFILES cleanWS ref           ⍝ assume current space
+      r←'* Cleanup done, ',r,' tags removed',⍙DELETEFILES/' and associated files'
+    ∇
+
+⍝ $Revision: 27928 $
+:EndClass

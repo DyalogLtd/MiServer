@@ -1,0 +1,8 @@
+ Stop
+ :If 9=⎕NC'Boot'
+     Boot.End
+     ⎕EX'Boot'
+     ⎕←'MiServer stopped.'
+ :Else
+     ⎕←'MiServer not running.'
+ :EndIf

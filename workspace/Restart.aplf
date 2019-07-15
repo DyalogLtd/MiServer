@@ -1,0 +1,4 @@
+ Restart;approot
+ approot←Boot.AppRoot
+ Stop
+ Start approot

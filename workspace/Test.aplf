@@ -1,0 +1,6 @@
+ r←{stopOnError}Test site
+ :If 0=⎕NC'stopOnError' ⋄ stopOnError←0 ⋄ :EndIf
+ :If 0=⎕NC'#.SeleniumTests'
+     ⎕SE.SALT.Load'[ws]\QA\SeleniumTests'
+ :EndIf
+ r←stopOnError #.SeleniumTests.Test site

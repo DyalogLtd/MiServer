@@ -1,0 +1,434 @@
+:NameSpace Utils
+⍝ Namespace containing :Includable utility functions
+
+    ⎕IO ⎕ML←1  ⋄ Version←1.05
+
+⍝ --- Selections ---
+
+    where←{⍵/⍳⍴⍵}        ⍝ Indices of 1's in ⎕IO 1
+
+⍝ --- Strings ---
+
+    lc←'abcdefghijklmnopqrstuvwxyzàáâãåèéêëòóôõöøùúûäæüìíîïðçñ' ⍝ (lower case alphabet)
+    uc←'ABCDEFGHIJKLMNOPQRSTUVWXYZÀÁÂÃÅÈÉÊËÒÓÔÕÖØÙÚÛÄÆÜÌÍÎÏÐÇÑ' ⍝ (upper case alphabet)
+    fromto←{n←⍴1⊃(t f)←⍺ ⋄ ~∨/b←n≥i←f⍳s←,⍵:s ⋄ (b/s)←t[b/i] ⋄ (⍴⍵)⍴s} ⍝ from-to casing fn
+
+    lcase←lc uc∘fromto ⍝ :Includable Lower-casification of simple array
+    ucase←uc lc∘fromto ⍝ Ditto Upper-casification
+
+    cut←{⍺←⍵∊1↑⍵ ⋄ ⎕ml←0 ⋄ 1↓¨⍺⊂⍵}                  ⍝ exclude delimiters cut
+
+      dtb←{                                         ⍝ Drop Trailing Blanks.
+          ⍺←' ' ⋄ 1<|≡⍵:(⊂⍺)∇¨⍵                     ⍝ nested?
+          2<⍴⍴⍵:(¯1↓⍴⍵){(⍺,1↓⍴⍵)⍴⍵}⍺ ∇,[¯1↓⍳⍴⍴⍵]⍵   ⍝ array
+          1≥⍴⍴⍵:(-+/∧\⌽⍵∊⍺)↓⍵                       ⍝ vector
+          (~⌽∧\⌽∧⌿⍵∊⍺)/⍵                            ⍝ matrix
+      }
+
+      dmb←{                                         ⍝ Drop Multiple Blanks.
+          ⍺←' ' ⋄ 1<|≡⍵:(⊂⍺)∇¨⍵                     ⍝ nested?
+          2<⍴⍴⍵:(¯1↓⍴⍵){(⍺,1↓⍴⍵)⍴⍵}⍺ ∇,[¯1↓⍳⍴⍴⍵]⍵   ⍝ array
+          2>⍴⍴⍵:(2∨/(~⍵∊⍺),1)/⍵                     ⍝ vector
+          (2∨/(,∨⌿~⍵∊⍺),1)/⍵                        ⍝ matrix
+      }
+
+      drvSrc←{⎕IO ⎕ML←0                       ⍝ JS 2012 Guess source of derived function.
+     
+          trav←{                                  ⍝ traverse, accumulating subtrees.
+              ~(⊂⍴⍵)∊,¨2 3:leaf ⍵                 ⍝ not a derv or train: done.
+              isop 1⊃⍵:{                          ⍝ derived fn:
+                  2=⍴⍵:mop ⍵                      ⍝ monadic operator
+                  3=⍴⍵:dop ⍵                      ⍝ dyadic operator.
+              }∇¨⍵                                ⍝ formatted subtrees.
+              leaf ⍵                              ⍝ neither: give up.
+          }
+     
+          mop←{1 ⍵}∘{                             ⍝ operator with one operand.
+              (l m)(land oper)←↓⍉↑⍵               ⍝ derived function components.
+              land,oper
+          }
+     
+          dop←{1 ⍵}∘{                             ⍝ operator with two operands.
+              (l m r)(land oper rand)←↓⍉↑⍵        ⍝ derived function components.
+              0=r:land,oper,rand
+              land,oper,'(',rand,')'
+          }
+     
+          leaf←{0 ⍵}∘{                            ⍝ format leaf.
+              (⊂⍵)∊pfns,pops:⍵                    ⍝ primitive fn/op.
+              (⊂⍵)∊,¨pfns,pops:⍵                  ⍝
+              '{'≡⊃⍵:,⍵                           ⍝ unnamed dfn
+              1∊'←{'⍷1/⍵:(1+(,⍵)⍳'←')↓,⍵          ⍝ dfn←{...} → {...}
+              '⎕'∊⊃⍵:' ',⍵,' '                    ⍝ system fn/op
+              1 1 repObj ⍵
+          }
+     
+          isfn←{                                  ⍝ is function?
+              0=≡⍵:⍵∊pfns                         ⍝ primitive function:
+              dfnop ⍵:1                           ⍝ dfn:
+              ~(,¨2 3)∨.≡⊂⍴⍵:0                    ⍝ not a derv or train.
+              isop 1⊃⍵:1                          ⍝ derv.
+              ∇⊃⌽⍵                                ⍝ derv or train.
+          }
+     
+          isop←{                                  ⍝ is operator?
+              (⊂⍵)∊pops:1                         ⍝ primitive operator:
+              (⊂⍵)∊'⎕S' '⎕R' '⎕OPT':1             ⍝ system op.
+              ~dfnop ⍵:0                          ⍝ not a d-op:
+              1∊↑'⍺⍺' '⍵⍵'⍷¨⊂⍵                    ⍝ is a d-op.
+          }
+     
+          dfnop←{'}'≡⊃⌽~∘' ',⍵}                   ⍝ dfn or dop
+     
+          pops←'/\⌿⍀.¨∘⍨&⍣[⌶',⎕UCS(80=⎕DR'')/9056 9016 9060 ⍝ primitive ops.
+          pf0←'+-×÷⌊⌈|*⍟<≤=≥>≠∨∧⍱⍲!?~○'           ⍝ primitive fns (scalar).
+          pf1←'⊢⊣⌷/⌿\⍀∊⍴↑↓⍳⊂⊃∩∪⊥⊤,⍒⍋⍉⌽⊖⌹⍕⍎⍪≡≢⍷'   ⍝ primitive fns (other).
+          pfns←pf0,pf1                            ⍝ primitive fns.
+     
+          err←⎕SIGNAL∘11                          ⍝ too hard: give up.
+          ⍺←⊃⎕RSI
+          ⊃⌽trav ⍺{0::⍵ ⋄ ⍺.⎕CR ⍵}⍵               ⍝ source of named function ⍵.
+      }
+
+      disp←{⎕IO ⎕ML←0                             ⍝ Boxed sketch of nested array.
+     
+          ⍺←⍬ ⋄ opts←⍺,(⍴,⍺)↓1 1 1 0 ⎕PP          ⍝ option defaults:
+          dec bch ctd sep ⎕PP←5↑opts              ⍝ decor, smooth, centred, separate pp.
+     
+          ul uc ur←bch⊃⌽'┌┬┐' '.'                 ⍝ upper──┐ ┌───left
+          ml mc mr←bch⊃⌽'├┼┤' '|+|'               ⍝ middle─┼×┼─centre
+          ll lc lr←bch⊃⌽'└┴┘' ''''                ⍝ lower──┘ └──right
+          vt hz←bch⊃⌽'│─' '|-'                    ⍝ vertical and horizontal.
+     
+          box←{                                   ⍝ Recursive boxing of nested array.
+              isor ⍵:⎕FMT⊂⍵                       ⍝ ⎕or: '∇name'.
+              1=≡,⍵:dec open ⎕FMT dec open ⍵      ⍝ simple array: format.
+              mat←matr dec open ⍵                 ⍝ matrix of opened subarrays.
+              dec<0∊⍴mat:0/∇ 1 open mat           ⍝ undecorated null: empty result.
+              subs←aligned ∇¨mat                  ⍝ aligned boxed subarrays. [10999]
+              (⊃⍴⍴⍵)gaps ⍵ plane subs             ⍝ collection into single plane.
+          }
+     
+          aligned←{                               ⍝ Alignment and centring.
+              rows cols←sepr⍴¨⍵                   ⍝ subarray dimensions.
+              sizes←(⌈/rows)∘.,⌈⌿cols             ⍝ aligned subarray sizes.
+              ctd=0:sizes↑¨⍵                      ⍝ top-left alignment.
+              v h←sepr⌈0.5×↑(⍴¨⍵)-sizes           ⍝ vertical and horizontal rotation.
+              v⊖¨h⌽¨sizes↑¨⍵                      ⍝ centred aligned subarrays.
+          }
+     
+          gaps←{                                  ⍝ Gap-separated sub-planes.
+              sep≤⍺≤2:⍵                           ⍝ not separating: done.
+              subs←(⍺-1)∇¨⍵                       ⍝ sub-hyperplanes.
+              width←⊃⌽⍴⊃subs                      ⍝ width of inter-plane gap.
+              fill←(⍺ width-3 0)⍴' '              ⍝ inter-plane gap.
+              ↑{⍺⍪fill⍪⍵}/1 open subs             ⍝ gap-separated planes.
+          }
+     
+          plane←{                                 ⍝ Boxed rank-2 plane.
+              sep∧2<⍴⍴⍺:⍺ join ⍵                  ⍝ gap-separated sub-planes.
+              odec←(dec shape ⍺)outer ⍵           ⍝ outer type and shape decoration.
+              idec←inner ⍺                        ⍝ inner type and shape decorations.
+              (odec,idec)collect ⍵                ⍝ collected, formatted subarrays.
+          }
+     
+          join←{                                  ⍝ Join of gap-separated sub-planes.
+              sep←(⊃⍴⍵)÷1⌈⊃⍴⍺                     ⍝ sub plane separation.
+              split←(0=sep|⍳⊃⍴⍵)⊂[0]⍵             ⍝ separation along first axis.
+              (⊂[1↓⍳⍴⍴⍺]⍺)plane¨split             ⍝ sub-plane join.
+          }
+     
+          outer←{                                 ⍝ Outer decoration.
+              sizes←1 0{⊃↓(⍉⍣⍺)⍵}¨sepr⍴¨⍵         ⍝ row and col sizes of subarrays.
+              sides←sizes/¨¨vt hz                 ⍝ vert and horiz cell sides.
+              bords←dec↓¨ml uc glue¨sides         ⍝ joined up outer borders.
+              ↑,¨/(ul'')⍺ bords(ll ur)            ⍝ vertical and horizontal borders.
+          }
+     
+          inner←{                                 ⍝ Inner subarray decorations.
+              deco←{(type ⍵),1 shape ⍵}           ⍝ type and shape decorators.
+              sepr deco¨matr dec open ⍵           ⍝ decorators: tt vv hh .
+          }
+     
+          collect←{                               ⍝ Collected subarrays.
+              lft top tt vv hh←⍺                  ⍝ array and subarray decorations.
+              cells←vv right 1 open tt hh lower ⍵ ⍝ cells boxed right and below.
+              boxes←(dec∨0∊⍴⍵)open cells          ⍝ opened to avoid ,/⍬ problem.
+              lft,top⍪↑⍪⌿,/boxes                  ⍝ completed collection.
+          }
+     
+          right←{                                 ⍝ Border right each subarray.
+              types←2⊥¨(⍳⍴⍵)=⊂¯1+⍴⍵               ⍝ right border lower corner types.
+              chars←mc mr lc lr[types]            ⍝    ..     ..      ..      chars.
+              rgt←{⍵,(-⊃⍴⍵)↑(⊃⍴⍵)1 1/vt,⍺}        ⍝ form right border.
+              ((matr 1 open ⍺),¨chars)rgt¨⍵       ⍝ cells bordered right.
+          }
+     
+          lower←{                                 ⍝ Border below each subarray.
+              bot←{⍵⍪(-1⊃⍴⍵)↑⍺ split ⍵}           ⍝ lower border.
+              split←{((¯2+1⊃⍴⍵)/hz)glue ⍺}        ⍝ decorators split with horiz line.
+              (matr↑,¨/⍺)bot¨matr ⍵               ⍝ cells bordered below.
+          }
+     
+          type←{                                  ⍝ Type decoration char.
+              dec<|≡⍵:hz                          ⍝ nested: '─'
+              isor ⍵:'∇'                          ⍝ ⎕or:    '∇'
+              sst←{                               ⍝ simple scalar type.
+                  0=dec×⍴⍴⍵:hz                    ⍝ undecorated or scalar ⍕⍵: char,
+                  (⊃⍵∊'¯',⎕D)⊃'#~'                ⍝ otherwise, number or space ref.
+              }∘⍕                                 ⍝ ⍕ distinguishes type of scalar.
+              0=≡⍵:sst ⍵                          ⍝ simple scalar: type.
+              {(1=⍴⍵)⊃'+'⍵}∪,sst¨dec open ⍵       ⍝ array: mixed or uniform type.
+          }
+     
+          shape←{                                 ⍝ Row and column shape decorators.
+              dec≤0=⍴⍴⍵:⍺/¨vt hz                  ⍝ no decoration or scalar.
+              cols←(×¯1↑⍴⍵)⊃'⊖→'                  ⍝ zero or more cols.
+              rsig←(××/¯1↓⍴⍵)⊃'⌽↓'                ⍝ zero or more rows.
+              rows←(¯1+3⌊⍴⍴⍵)⊃vt rsig'⍒'          ⍝ high rank decorator overrides.
+              rows cols                           ⍝ shape decorators.
+          }
+     
+          matr←{↑,↓⍵}                             ⍝ matrix from non-scalar array.
+          sepr←{+/¨1⊂↑⍵}                          ⍝ vec-of-mats from mat-of-vecs.
+          open←{16::(1⌈⍴⍵)⍴⊂'[ref]' ⋄ (⍺⌈⍴⍵)⍴⍵}   ⍝ stretched to expose nulls.
+          isor←{1 ⍬≡(≡⍵)(⍴⍵)}                     ⍝ is ⎕or of object?
+          glue←{0=⍴⍵:⍵ ⋄ ↑⍺{⍺,⍺⍺,⍵}/⍵}            ⍝ ⍵ interspersed with ⍺s.
+     
+          isor ⍵:⎕FMT⊂⍵                           ⍝ simple ⎕OR: done.
+          1=≡,⍵:⎕FMT ⍵                            ⍝ simple array: done.
+          box ⍵                                   ⍝ recursive boxing of array.
+      }
+
+      display←{⎕IO ⎕ML←0                              ⍝ Boxed display of array.
+          ⍺←⍬ ⋄ ch ⎕PP←2↑⍺,(⍴,⍺)↓1 ⎕PP                ⍝ default chars and precision
+          chars←ch⊃'..''''|-' '┌┐└┘│─'                ⍝ ⍺: 0-clunky, 1-smooth.
+     
+          tl tr bl br vt hz←chars                     ⍝ Top left, top right, ...
+     
+          box←{                                       ⍝ Box with type and axes.
+              vrt hrz←(¯1+⍴⍵)⍴¨vt hz                  ⍝ Vert. and horiz. lines.
+              top←(hz,'⊖→')[¯1↑⍺],hrz                 ⍝ Upper border with axis.
+              bot←(⊃⍺),hrz                            ⍝ Lower border with type.
+              rgt←tr,vt,vrt,br                        ⍝ Right side with corners.
+              lax←(vt,'⌽↓')[¯1↓1↓⍺],¨⊂vrt             ⍝ Left side(s) with axes,
+              lft←⍉tl,(↑lax),bl                       ⍝ ... and corners.
+              lft,(top⍪⍵⍪bot),rgt                     ⍝ Fully boxed array.
+          }
+     
+          deco←{⍺←type open ⍵ ⋄ ⍺,axes ⍵}             ⍝ Type and axes vector.
+          axes←{(-2⌈⍴⍴⍵)↑1+×⍴⍵}                       ⍝ Array axis types.
+          open←{16::(1⌈⍴⍵)⍴⊂'[ref]' ⋄ (1⌈⍴⍵)⍴⍵}       ⍝ Expose null axes.
+          trim←{(~1 1⍷∧⌿⍵=' ')/⍵}                     ⍝ Remove extra blank cols.
+          type←{{(1=⍴⍵)⊃'+'⍵}∪,char¨⍵}                ⍝ Simple array type.
+          char←{⍬≡⍴⍵:hz ⋄ (⊃⍵∊'¯',⎕D)⊃'#~'}∘⍕         ⍝ Simple scalar type.
+          line←{(6≠10|⎕DR' '⍵)⊃' -'}                  ⍝ underline for atom.
+     
+          {                                           ⍝ Recursively box arrays:
+              0=≡⍵:' '⍪(open ⎕FMT ⍵)⍪line ⍵           ⍝ Simple scalar.
+              1 ⍬≡(≡⍵)(⍴⍵):'∇' 0 0 box ⎕FMT ⍵         ⍝ Object rep: ⎕OR.
+              1=≡⍵:(deco ⍵)box open ⎕FMT open ⍵       ⍝ Simple array.
+              ('∊'deco ⍵)box trim ⎕FMT ∇¨open ⍵       ⍝ Nested array.
+          }⍵
+      }
+
+    ∇ bcut←la psmum lengths;in;ispacing;iwidth;ittl;cut;n
+    ⍝ Find Partition so +/⌈/¨ is under max
+      (ispacing ittl)←+\⌽2↑la,1 ⋄ n←in←⍴lengths ⋄ cut←in↑1
+      :Repeat ⋄ :Until ∧/bcut←cut
+      n←n-1 ⋄ cut←in⍴n↑1
+      :OrIf ittl≤+/ispacing+⌈/¨cut⊂lengths
+    ∇
+
+      showCol←{ ⍝ Show table in column format
+        ⍝ Each row represents a word
+          max←⌈/w←⍬∘⍴∘⍴¨words←trimEnds¨↓⍣(326≠⎕DR ⍵)⊢⍵
+          0∊⍴words:0 0⍴''
+          ⎕ML←⎕IO←1
+        ⍝ We can specify the total width and minimum space between each word (column)
+        ⍝ If the minimum is negative, the columns may not be of the same width
+          ⍺←⍬ ⋄ la←{0∊⍴⍵:0 ' ' ⋄ ∨/0 2∊10|⎕DR ⍵:0 ⍵ ⋄ 2↑⍵}⍺
+          la[2]←{3=10|⎕DR ⍵:⍵ ⋄ ⍴,⍵}spacer←2⊃la
+          (spacing width)←{⍵[⍋⍵]}a,(⍳max∧.<a),(max∨.<a←la~0)↓⎕PW
+          0>spacing:0 s↓⊃,/' ',⍣s¨⊢n↑¨↑¨c⊂words⊣n←1⍳⍨1⌽c←⎕PW s psmum w⊣s←-spacing
+          w+←spacing
+          nw←npl×nrw←⌈(⍴w)÷npl←⌊(width+spacing)÷max+spacing
+          words←⍉(npl,nrw)⍴1⌽nw↑(⊂''),(max↑¨words),¨⊂spacing{3=10|⎕DR ⍵:⍺⍴'' ⋄ ⍵}spacer
+          (0,-spacing)↓↑,/words
+      }
+
+⍝ Ex: 60  showCol ⎕nl 3 ⍝ 60 wide display of fns, 1 space between columns
+⍝      3  showCol ⎕nl 3 ⍝ ⎕PW wide display of fns, 3 spaces in between cols
+⍝ 78 '; ' showcol ⎕nl 2 ⍝ 78 wide display, '; ' between columns
+⍝ ' | '   showCol ⎕nl 9 ⍝ ⎕PW wide, ' | ' between columns
+
+    ∇ r←{options}showRow words;text;sh;blk;sp;pw;⎕ML;⎕IO;n    ⍝ fit a list ⎕PW wide
+      ⍎(0=⎕NC'options')/'options←⍬' ⋄ ⎕ML←⎕IO←1
+     ⍝ options are Printing Width, Granularity, min Spacing between words
+      (pw blk sp)←options,(⍴,options)↓⎕PW,4 1 ⋄ pw←pw-sp
+      sh←⊃,/⍴¨,¨text←{~∘' '¨↓⍵}⍣(326≠⎕DR words)+words ⍝ accept matrix of words
+      sh←⊃,/⍴¨text←(blk×⌈blk÷⍨sh+sp)↑¨text ⍝ adjust each word's size
+      r←0⍴⊂''
+      :While 0<⍴text
+          r←r,,/(n←1⌈+/pw≥+\sh)↑text ⋄ (text sh)←n↓¨text sh
+      :EndWhile
+      r←↑r
+    ∇
+
+    toMatrix←{⍺←3↓4↑⎕av ⋄ ⎕ml←0 ⋄ (2↑0∊⍴⍵)↓↑1↓¨(s∊⍺)⊂s←(1↑⍺),⍵} ⍝ multiple cut chars allowed
+
+    toVector←{⍺←3↓4↑⎕av ⋄ b←,1,⌽∨\' '≠⌽⍵ ⋄ 1↓b/,⍺,⍵}
+
+    trimEnds←{((∨\b)∧⌽∨\⌽b←' '≠⍵)/⍵}
+
+      repObj←{             ⍝ String representation of object V0.33
+⍝ This version accounts for ⎕TC type characters
+          ⍵≡⍬:'⍬' ⋄ ⍵≡'':'''''' ⋄ ⍵≡⎕NULL:'⎕NULL'
+          scal←0∊rank←+/⍴s←⍴⍵ ⋄ char←>/(simple num)←∧\~(10|⎕DR 1/⍵)∊¨6(0 2)
+         ⍝ Refs should normally not be displayed. To allow remove set ⍺[2] to 1
+          ⍺←0              ⍝ recursive call?
+          (rc ref)←2↑⍺
+          or←scal∧1=≡R←⍵   ⍝ normally no funny objects like ⎕ORs
+          or∨9=⎕NC'R':ref{⍵⊣÷⍺}⍕⍵     ⍝ display refs as they are
+     
+⍝ Reduce object to 1 item if all same elements
+          mod←(0<rank)∧(n=0)∨(5×char)<n←×/s
+          mod←mod∧as←char{0∊⍴⍵:1 ⋄ ⍵∧.≡1↑⍵}obj←,⍵ ⍝ as: all the same
+          obj←mod{16::⊂'[ref]' ⋄ 1(↑⍣⍺)⍵}obj  ⍝ take only 1st? (grab prototype if empty)
+          shape←mod{⍵≡,1:',' ⋄ (⍺∨1<⍴⍵)/'⍴',⍨⍕⍵}s
+          shape←shape,(encl←simple<as)⍴'⊂'
+     
+⍝ Simple scalars and char vector≠⍴1 do not need parens
+          parens←rc∧simple≤(0<⍴shape)∨(rank=1)∧num∨∨/(4↑⎕AV)∊⍵
+          (lp rp)←parens⍴¨'()'
+          ~simple:rp,⍨lp,shape,encl{⍺⍲'('=1↑⍵:⍵ ⋄ 1↓¯1↓⍵}1↓⊃,/' ',¨{'⎕N'>.=2↑⍵:'(',⍵,')' ⋄ ⍵}¨1 ref∘∇¨obj
+     
+⍝ Simple objects (char should account for ⎕TC chars et al.)
+          ⎕PP←17 ⍝ for numbers
+     
+          cmpv←{⎕CT←⎕IO←0                    ⍝ compress numeric vector
+              ∨/e←(0∊s),⍬≡s←⍴v←⍵:⍕e/'⍬',1↑v  ⍝ empty or scalar
+              ⍺←4 ⋄ ⍺≥s:⍕v↑⍨⍺⌊s              ⍝ min length to consider compressing
+              d←{⍵>¯1⌽1 1 0⍷⍵}{1,⍵,⍨1↑⍵}2≠/2-/v
+             ⍝ We know we have at least ONE section to deal with
+             ⍝ We split the list into sections that either have to be compressed or not
+              s←-+/lim←{(⍵>1⌽⍵)∨⍵>¯1↓0,⍵}d   ⍝ where each section starts
+              addp←(s↑1)<s≠¯1                ⍝ where to add parentheses
+              r←1↓⊃,/addp{d v←⍵ ⋄ ∧/d:',',⍕v ⍝ all different?
+                  lp←'[('[⍺] ⋄ rp←⍺/')' ⋄ ap←{',',lp,⍵,rp}
+                  0=∆←-/2⍴v:ap(⍕⍴v),'/',⍕1⍴v ⍝ all the same
+                  A←(nz←0≠t)/⍕t←1⍴v          ⍝ write A+B×⍳C
+                  A←A,(nz∨∆>0)/'-+'[∆>0]
+                  B←(t≠1)/(⍕t←|∆),'×'
+                  C←nz↓'-⎕io-⍳',⍕⍴v
+                  (⍴d←⍕v)>⍴t←A,B,C:ap t
+                  ',',d
+              }¨↓⍉↑lim∘⊂¨d v
+             ⍝ There may be some superflous commas
+              b←(','=r)⍲(¯1⌽r=')')⍱1⌽r∊'[('
+              (b\b/r)~'['
+          }
+     
+          obj←shape,num ⍺{1↑⍺:cmpv ⍵ ⋄ ⎕ML←1 ⋄ ⎕IO←0 ⋄ QU←{Q,((1+t=Q)/t←⍵),Q←''''}
+          ⍝ We have to assume not all characters are available. Those should be:
+              Always←⎕A,⎕D,'abcdefghijklmnopqrstuvwxyz_.,:;%!"/=\-+''#$£¢^¿¡(){}[]§@`∣¶&'
+              Always,←'ÁÂÃÇÈÊËÌÍÎÏÐÒÓÔÕÙÚÛÝþãìðòõÀÄÅÆÉÑÖØÜßàáâäåæçèéêëíîïñùúûüóôöø'
+              Always,←'≤≥⌿⍀<>≠∨∧÷×?∊⍴~↑↓⍳○*⌈⌷¨⌊∇∆⍙⍨∘⊂⊃∩∪⊥⊤⌶|⍺⍵¯⍬⍱⍲⍒⍋⍉⌽⊖⍟⌹⍕⍎⍫⍪≡≢⍷⋄←→⍝⎕⍞⍣ '
+              ∧/t←⍵∊Always:QU ⍵ ⍝ no special chars?
+            ⍝ If only a few chars transform the whole string into ⎕AV
+              UCS←{1⌽')(⎕ucs ',⍕cmpv ⎕UCS ⍵}
+            ⍝ More than a few; create a mixture of ⎕UCS and 'quotes'
+              minsize←3 ⍝ how much special chars to include between sections; that number is subjective
+              c∨←minsize>∊⍴¨c←ucs⊂⍨c←1,1↓ucs≠¯1⌽ucs←~t ⍝ consider small groups of ASCII as UCS
+             ⍝ ∧/sc←∊c:ucs ⍵ ⍝ are the pieces small enough to be all in ⎕UCS?
+              (lp rp)←'()'/⍨¨(1↓⍺)∧1<+/c←1,1↓ucs≠¯1⌽ucs←∊c
+              rp,⍨lp,∊{⍺,',',⍵}/(c/ucs){⍺:UCS ⍵ ⋄ QU ⍵}¨c⊂⍵
+          }obj
+          lp,obj,rp
+      }
+
+    ∇ string←{sep}toXML value;tag;s;v;⎕PP;repChar;⎕ML;dr;⎕IO
+⍝ Turns an APL object into an XML representation
+⍝ Simple scalars are turned into CHAR, NUMBER or NULL
+⍝ Vectors or rank>1 are turned into ARRAYs of numeric LIST or char STRING
+⍝ Characters are translated to be acceptable by ⎕XML
+      ⎕PP←17 ⋄ ⎕ML←1 ⋄ ⎕IO←0 ⋄ sep←{6::'' ⋄ ⍎⍵}'sep'
+      tag←{'<',s,⍵,'</',s←⍺,'>'}
+     ⍝ Some characters cannot go thru ⎕XML, this is normal. The valid ones are
+     ⍝ #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
+     ⍝ That is any Unicode character, excluding the control chars, FFFE, and FFFF.
+      v←'<>&',⎕UCS s←(⍳32)∩⎕AVU ⍝ this may vary in e.g. Unix Classic
+      s←'&lt;' '&gt;' '&amp;','£%'∘,¨(⎕D,⎕A)[s],¨';'
+      repChar←s∘(v∘⍳{~∨/b←(⍴⍺)>i←⍺⍺ v←,⍵:⍵ ⋄ (b/v)←⍺[b/i] ⋄ ∊v})
+      :If 0∊⍴⍴value ⍝ scalar
+          :If 0∊1↑0⍴value ⋄ string←'number'tag⍕value
+          :ElseIf ' '∊1↑0⍴value ⋄ string←'char'tag repChar value
+          :ElseIf ⎕NULL≡value ⋄ string←'<null/>'
+          :ElseIf 1≥|≡value ⋄ 'no Refs allowed'⎕SIGNAL 11
+          :Else ⍝ must be enclosed
+              string←'enclosed'tag sep toXML↑value
+          :EndIf
+      :Else ⍝ not a scalar
+          s←'shape'tag⍕⍴value
+          :If 2|dr←10|⎕DR value ⋄ string←'list'tag⍕,value
+          :ElseIf dr∊0 2 ⋄ string←'string'tag repChar,value
+          :Else
+              string←∊sep∘toXML¨{0∊⍴⍵:⍬⍴⍵ ⋄ ⍵}value
+              :If (1≥×/⍴value)∧1≢≡value ⋄ string←'enclosed'tag string ⋄ :EndIf
+          :EndIf
+          string←sep,'array'tag s,string
+      :EndIf
+    ∇
+
+    ∇ value←fromXML string;mat;shape;⎕ML;type;array;enc;E;n;Chg
+⍝ Turns an XML string into an APL object
+⍝ The string must have been produced by the <toXML> fn above.
+      ⎕ML←1 ⋄ E←'enclosed' ⍝ for ⊂
+     ⍝ Character strings are transformed into a more suitable format
+      :Select type←2⊃,mat←'whitespace' 'preserve'⎕XML⍣(0 2∊⍨10|⎕DR string)+string
+     
+      :CaseList 'array'E
+      ⍝ The array could be enclosed several times
+          n←2+enc←+/∧\mat[;2]∊⊂E
+          shape←2⊃⎕VFI 3⊃mat[n;]
+          value←fromXML¨(mat[n;1]=n↓mat[;1])⊂[1]n 0↓mat
+          value←⊂⍣enc⌷shape⍴↑⍣(1∊⍴value)⌷value
+      :CaseList 'list' 'number'
+          value←⍬∘⍴⍣(type≡'number')+2⊃⎕VFI 3⊃,mat
+      :CaseList 'string' 'char'
+          Chg←(32↑⎕D,⎕A)∘{⍺∊⍨c←⍵.Match[3]:⎕UCS ¯1+⍺⍳c ⋄ ⍵}
+          value←⍬∘⍴⍣(type≡'char')+{'£%.;'⎕R Chg ⍵}3⊃,mat
+      :Case 'null'
+          value←⎕NULL
+      :EndSelect
+    ∇
+
+    ∇ r←la txtreplace string;⎕IO;N;from;to;Fl;Tl;Fp;i;b;ip;n
+⍝ Text Pattern Replace
+⍝ la is a 2 elements enclosed strings: what to look for, the replacement string.
+⍝ Ex: 'abc' 'xxyyzz' will turn all non overlapping 'abc' substrings into 'xxyyzz'
+      (Fl Tl)←⍴¨(from to)←,¨la ⋄ Fp←⍴⎕IO←0 ⋄ N←⍴b←from⍷string←,string
+      ⎕SIGNAL Fl↓11
+      :If 1∊Fl ⋄ Fp←{⍵/⍳⍴⍵}from=string ⍝ simple case
+      :Else
+          :While N>i←b⍳1  ⍝ remove overlapping matches
+              (Fl↑(b⍳1)↓b)←0 ⋄ Fp,←i
+          :EndWhile
+      :EndIf
+     
+⍝ Do it
+      :If 0<ip←⍴Fp
+          :If 0>n←Fl-Tl   ⍝ do we need to insert spaces?
+              b[]←1 ⋄ b[Fp]←1-n ⋄ string←b/string
+              Fp←Fp-n×⍳ip ⍝ adjust positions
+          :EndIf
+          string[,Fp∘.+⍳Tl]←(ip×Tl)⍴to ⍝ replace
+          :If n>0         ⍝ remove excess
+              b[(Fp+Fl-1)∘.-⍳n]←~b[]←1
+              string←b/string
+          :EndIf
+      :EndIf
+      r←string
+    ∇
+
+:EndNameSpace

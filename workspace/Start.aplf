@@ -1,0 +1,100 @@
+ r←{loadfirst}Start arg;site;appRoot;dyalog;FileSep;isWin;sampleMiSite;folderize;NL;ws;congaPath;i
+⍝ This is the program used to start MiServer
+⍝ site is either:
+⍝   - a character vector containing the path of the MiSite to run
+⍝   - a 3 element vector of character vectors containing
+⍝     [1] the path of the MiSite
+⍝     [2] (optional) the path to MiServer
+⍝     [3] (optional) the path to Conga shared libraries
+⍝         '⍺' - path to the interpreter
+⍝         '⍵' - path of the current workspace,
+⍝         '↓' - current path (as returned by ⎕CMD 'pwd' or 'cd')
+⍝         ''  - Conga default
+⍝         'pathname' - user specified path
+⍝ loadfirst is a Boolean indicating whether to load all of the necessary classes in the Root namespace (#)
+⍝           this is useful when developing MiSites in that you can edit MiPages in the Root
+
+ NL←⎕UCS 13
+ folderize←{∊1 ⎕NPARTS⊃{⍺,(⍵=1)/'/'}/0 1 ⎕NINFO ⍵}
+ arg←,⊆arg
+ (site MSRoot congaPath)←3↑arg,(≢arg)↓'' '' ''
+ :If 0∊⍴MSRoot ⋄ MSRoot←⊃1 ⎕NPARTS ⎕WSID ⋄ :EndIf
+ MSRoot←folderize MSRoot
+
+ :If 0=⎕NC'⎕SE.SALT' ⍝ Do we have SALT?
+     #.SALT.Boot
+    ⍝ Set up a trap for runtime errors
+     :If ' '∧.=2 ⎕NQ'.' 'GetEnvironment' 'RIDE_INIT'
+         ⎕TRAP←(0 'E' '⍎#.RuntimeError ⎕DMX')
+     :EndIf
+ :EndIf
+
+ :If 'jenkins'≡7↑2 ⎕NQ'.' 'GetEnvironment' 'BUILD_TAG'
+     ⎕TRAP←0 'E' '⎕PW←2000⋄{⍵.({⍵,⍪⍎¨⍵}↓⎕nl 2)}⎕dmx ⋄ ⎕off 12'
+ :EndIf
+
+ :If 9.1=#.⎕NC⊂'Boot'
+     :If #.Boot.isRunning
+         ⎕←'MiServer is currently running "',(#.Boot.ms.Config.AppRoot),'".'
+         ⍞←'Shut down and start "',site,'"? [y/N] '
+         :If (~(¯1↑⍞)∊'Yy')
+             →0
+         :Else
+             #.Stop
+         :EndIf
+     :EndIf
+ :EndIf
+
+ :If {6::⍵ ⋄ 1⊣loadfirst}0 ⋄ Load site ⋄ :EndIf
+
+ :If 0∊⍴site
+ :AndIf 0∊⍴site←2 ⎕NQ'.' 'GetEnvironment' 'MiServer'
+     ⎕←'      Start ''./MS3'' ⍝ Run the MiServer v3.0 demonstration site'
+     :Return
+ :EndIf
+
+ :Trap 912 ⍝ 912 is signalled by DrA in the event of a server failure
+     ⎕SE.SALT.Load MSRoot,'Core/Boot'
+     ⎕SE.SALT.Load MSRoot,'Utils/Files'
+     appRoot←MSRoot #.Boot.makeSitePath site
+
+     :If #.Files.DirExists appRoot
+
+         :If 0=#.⎕NC'Conga'
+             dyalog←folderize 2 ⎕NQ'.' 'GetEnvironment' 'DYALOG'
+
+             :Trap 11
+                 'Conga'#.⎕CY ws←dyalog,'ws/conga' ⍝ runtime needs full workspace path
+             :Else
+                 r←'This version of MiServer requires Conga v3.0 or later'
+                 →0⊣r,←NL,'Conga v3.0 or later was not found at ',ws
+             :EndTrap
+
+         :EndIf ⍝ Bring Conga in if not present
+
+         :Trap 0
+             #.DRC←congaPath #.Conga.Init''
+         :Else
+             →0⊣r←'Conga v3.0 or later shared library was not found.'
+         :EndTrap
+
+         MSRoot Boot.Run appRoot
+         r←'MiServer for "',site,'" started on http://',(2 ⎕NQ'.' 'TCPGetHostID'),':',⍕Boot.ms.Config.Port
+         r,←NL,'Running in ',((1+#.Boot.ms.Config.Production)⊃'Debug' 'Production'),' mode'
+         r,←' (configured by setting <Production> in /Config/Server.xml)'
+
+         :If ('R'=1⍴4⊃'.'⎕WG'APLVersion')∨~0∊⍴2 ⎕NQ'.' 'GetEnvironment' 'runtime'
+             :Repeat  ⍝ if runtime, do not return to immediate execution
+                 {}⎕DL 10
+             :Until ¯1=Boot.ms.TID
+         :EndIf
+
+     :Else
+         r←'MiServer NOT started - "',site,'" not found'
+     :EndIf
+ :Else ⍝ we only get here if we're trapping errors and we hit a server error
+     :Trap 0
+         Stop  ⍝ try to shut down gracefully
+     :EndTrap
+     ⎕OFF
+ :EndTrap

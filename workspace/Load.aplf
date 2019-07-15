@@ -1,0 +1,30 @@
+ {appRoot}←{debug}Load site;MSRoot;empty;hr
+ debug←{6::0 ⋄ debug}0
+ MSRoot←⊃1 ⎕NPARTS ⎕WSID
+ :If empty←site≡'' ⋄ site←'./MS3' ⋄ :EndIf
+ :Trap debug↓0
+     ⎕SE.SALT.Load MSRoot,'Core/Boot -target=#'
+     appRoot←MSRoot #.Boot.makeSitePath site
+     #.Boot.Load appRoot
+     :If #.Files.DirExists MSRoot,'QA'
+         ⎕SE.SALT.Load MSRoot,'QA/QA -target=#'
+     :EndIf
+     ⎕←'Development environment loaded'
+
+     :If #.Files.DirExists appRoot
+         :Trap 0
+             ⎕SE.SALT.Load appRoot,'/Code/*'
+             ⎕SE.SALT.Load appRoot,'/Code/Templates/*'
+             ⎕←'MiSite "',appRoot,'" loaded'
+         :Else
+             ⎕←'Error loading MiSite "',appRoot,'" - ',⊃,/⎕DM
+         :EndTrap
+     :Else
+         :If ~empty
+             ⎕←'MiSite "',appRoot,'" not found'
+         :EndIf
+         appRoot←''
+     :EndIf
+ :Else
+     ⎕←'Could not load development environment due to: ',⊃,/⎕DM
+ :EndTrap

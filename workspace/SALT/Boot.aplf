@@ -1,0 +1,13 @@
+ Boot
+⍝ Move a local copy of SALT into ⎕SE
+ ⎕SE.⎕FIX¨#.SALT.(⎕SRC¨SALTUtils SALT Parser UnicodeFile)
+
+⍝ The Dyalog namespace is a bit more complicated
+ ⎕EX'⎕se.Dyalog' ⋄ '⎕SE.Dyalog'⎕NS ⍬
+
+⍝ We cannot do
+⍝   'Dyalog'⎕SE.⎕NS ⎕OR'SALT.Dyalog'
+⍝ because this will keep a reference to # in ⎕SE
+⍝ so we do this:
+ ⎕SE.Dyalog.⎕FIX ⎕SRC Dyalog.Utils
+ '⎕se.Dyalog.Callbacks'⎕NS ⎕OR'Dyalog.Callbacks'
