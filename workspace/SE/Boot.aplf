@@ -1,0 +1,14 @@
+ Boot
+ ⋄ Kilroy←{(⊂⍵)⎕NPUT('c:\git\miserver\',(2⊃⎕SI),'.',⍕2⊃⎕LC)1}  ⍝ MB: testing
+⍝ Move a local copy of SALT into ⎕SE
+ ⍝⎕FIX¨#.SALT.(⎕SRC¨SALTUtils SALT Parser UnicodeFile)
+Kilroy''
+⍝ The Dyalog namespace is a bit more complicated
+ ⍝'Dyalog'⎕NS ⍬
+Kilroy''
+⍝ We cannot do
+⍝   'Dyalog'⎕SE.⎕NS ⎕OR'SALT.Dyalog'
+⍝ because this will keep a reference to # in ⎕SE
+⍝ so we do this:
+⍝ ⎕SE.Dyalog.⎕FIX ⎕SRC Dyalog.Utils
+⍝ '⎕se.Dyalog.Callbacks'⎕NS ⎕OR'Dyalog.Callbacks'

@@ -1,9 +1,11 @@
  e←∆GetEnvironment param;c;z;r;nocase;lc
 ⍝ standalone replacement for GetEnvironment which is useless with standalone exe's
- c←1↓2 ⎕NQ'.' 'GetCommandLineArgs'
- lc←(819⌶) ⍝ :Includable Lower-casification of simple array
- nocase←{(lc ⍺)⍺⍺ lc ⍵} ⍝ case insensitive operator
+ :If 0=≢e←2 ⎕NQ'.' 'GetEnvironment'param  ⍝ regular GetEnv has priority...
+     c←1↓2 ⎕NQ'.' 'GetCommandLineArgs'
+     lc←(819⌶) ⍝ :Includable Lower-casification of simple array
+     nocase←{(lc ⍺)⍺⍺ lc ⍵} ⍝ case insensitive operator
 
- z←(((r←1+≢param)↑¨c){⍺≡nocase ⍵}¨⊂param,'=')⍳1
+     z←(((r←1+≢param)↑¨c){⍺≡nocase ⍵}¨⊂param,'=')⍳1
 
- e←r↓z⊃c,⊂''
+     e←r↓z⊃c,⊂''
+ :EndIf

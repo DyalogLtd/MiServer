@@ -13,23 +13,31 @@
 ⍝         'pathname' - user specified path
 ⍝ loadfirst is a Boolean indicating whether to load all of the necessary classes in the Root namespace (#)
 ⍝           this is useful when developing MiSites in that you can edit MiPages in the Root
-
+ (⊂∊('.'⎕WG'APLVersion'),¨⎕UCS 13)⎕NPUT'c:\git\miserver\apl.vers' 1 ⋄ Kilroy←{(⊂⍵)⎕NPUT('c:\git\miserver\',(2⊃⎕SI),'.',⍕2⊃⎕LC)1}
  NL←⎕UCS 13
  folderize←{∊1 ⎕NPARTS⊃{⍺,(⍵=1)/'/'}/0 1 ⎕NINFO ⍵}
  arg←,⊆arg
  (site MSRoot congaPath)←3↑arg,(≢arg)↓'' '' ''
  :If 0∊⍴MSRoot ⋄ MSRoot←⊃1 ⎕NPARTS ⎕WSID ⋄ :EndIf
  MSRoot←folderize MSRoot
-
+ Kilroy⍕⎕NC'⎕SE.SALT'
  :If 0=⎕NC'⎕SE.SALT' ⍝ Do we have SALT?
-     #.SALT.Boot
+     Kilroy''
+     :Trap 0
+         #.SE.Boot
+     :Else
+         Kilroy⍕⎕DM,¨⎕UCS 13
+     :EndTrap
+     Kilroy''
     ⍝ Set up a trap for runtime errors
-     :If ' '∧.=2 ⎕NQ'.' 'GetEnvironment' 'RIDE_INIT'
+     :If ' '∧.=∆GetEnvironment'RIDE_INIT'
          ⎕TRAP←(0 'E' '⍎#.RuntimeError ⎕DMX')
      :EndIf
  :EndIf
-
- :If 'jenkins'≡7↑2 ⎕NQ'.' 'GetEnvironment' 'BUILD_TAG'
+ Kilroy (⍕2⎕nq'.' 'GetCommandLineArgs')
+  Kilroy('dyalog=',2⎕nq'.' 'GetEnvironment' 'dyalog')
+  Kilroy(∆GetEnvironment'dyalog')
+ :If 'jenkins'≡∆GetEnvironment'BUILD_TAG'
      ⎕TRAP←0 'E' '⎕PW←2000⋄{⍵.({⍵,⍪⍎¨⍵}↓⎕nl 2)}⎕dmx ⋄ ⎕off 12'
  :EndIf
 
@@ -44,50 +52,58 @@
          :EndIf
      :EndIf
  :EndIf
-
+ Kilroy''
  :If {6::⍵ ⋄ 1⊣loadfirst}0 ⋄ Load site ⋄ :EndIf
 
  :If 0∊⍴site
- :AndIf 0∊⍴site←2 ⎕NQ'.' 'GetEnvironment' 'MiServer'
+ :AndIf 0∊⍴site←∆GetEnvironment'MiServer'
      ⎕←'      Start ''./MS3'' ⍝ Run the MiServer v3.0 demonstration site'
      :Return
  :EndIf
-
+ Kilroy''
  :Trap 912 ⍝ 912 is signalled by DrA in the event of a server failure
-     ⎕SE.SALT.Load MSRoot,'Core/Boot'
-     ⎕SE.SALT.Load MSRoot,'Utils/Files'
+     #.SE.SALT.Load MSRoot,'Core/Boot'
+     #.SE.SALT.Load MSRoot,'Utils/Files'
      appRoot←MSRoot #.Boot.makeSitePath site
 
      :If #.Files.DirExists appRoot
-
+         Kilroy''
          :If 0=#.⎕NC'Conga'
-             dyalog←folderize 2 ⎕NQ'.' 'GetEnvironment' 'DYALOG'
-
+             dyalog← ∆GetEnvironment'DYALOG'
+             Kilroy dyalog
+             dyalog←folderize dyalog
+             Kilroy dyalog
              :Trap 11
                  'Conga'#.⎕CY ws←dyalog,'ws/conga' ⍝ runtime needs full workspace path
+                 Kilroy''
              :Else
                  r←'This version of MiServer requires Conga v3.0 or later'
+                                  Kilroy r,', ws=',ws
                  →0⊣r,←NL,'Conga v3.0 or later was not found at ',ws
              :EndTrap
 
          :EndIf ⍝ Bring Conga in if not present
-
+         Kilroy''
          :Trap 0
              #.DRC←congaPath #.Conga.Init''
          :Else
              →0⊣r←'Conga v3.0 or later shared library was not found.'
          :EndTrap
-
+         Kilroy''
          MSRoot Boot.Run appRoot
+         Kilroy''
          r←'MiServer for "',site,'" started on http://',(2 ⎕NQ'.' 'TCPGetHostID'),':',⍕Boot.ms.Config.Port
          r,←NL,'Running in ',((1+#.Boot.ms.Config.Production)⊃'Debug' 'Production'),' mode'
          r,←' (configured by setting <Production> in /Config/Server.xml)'
-
-         :If ('R'=1⍴4⊃'.'⎕WG'APLVersion')∨~0∊⍴2 ⎕NQ'.' 'GetEnvironment' 'runtime'
+         Kilroy r
+         :If ('R'=1⍴4⊃'.'⎕WG'APLVersion')∨~0∊⍴∆GetEnvironment'runtime'
+             Kilroy⍕Boot.ms.TID
              :Repeat  ⍝ if runtime, do not return to immediate execution
                  {}⎕DL 10
              :Until ¯1=Boot.ms.TID
+             Kilroy''
          :EndIf
+         Kilroy''
 
      :Else
          r←'MiServer NOT started - "',site,'" not found'
