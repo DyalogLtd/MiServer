@@ -421,7 +421,7 @@
       REQ←conns.Req
       REQ.Server←⎕THIS ⍝ Request will also contain reference to the Server
       res←REQ.Response
-      startsize←length←0
+      cacheMe←encodeMe←startsize←length←0
      
       :If 200=res.Status
           :If 2=conns.⎕NC'PeerAddr' ⋄ REQ.PeerAddr←conns.PeerAddr ⋄ :EndIf       ⍝ Add Client Address Information
