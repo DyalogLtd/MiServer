@@ -1,0 +1,118 @@
+﻿:class Tube_Planner3 : MiPage
+⍝ Control:: _JS.Chosen _.style
+⍝ Description:: Multi-waypoint tube/metro/subway planner for multiple cities
+
+    ∇ Compose;ipcity;go;route;inputs;reorder
+      :Access public
+      :If 0=⎕NC'TUBE.cities'
+          (TUBE←⎕NS ⍬).⎕CY'tube'
+          cities←'^.' '_(.)'⎕R'\u&' ' \u1'⊢(TUBE.⎕NL ¯9)~⊂'notes'
+      :EndIf
+     
+      Add _.style ScriptFollows
+      ⍝ @import url('https://fonts.googleapis.com/css?family=Hammersmith+One&subset=latin-ext');
+      ⍝ body {text-align: center; font-family: "Hammersmith One", sans-serif}
+      ⍝ #waypoints {margin: 1em}
+      ⍝ .sel {width: 36em}
+      ⍝ .move, .kill, .rev {display: inline-block; width: 2em}
+      ⍝ .move {cursor: row-resize}
+      ⍝ .waypoint:last-of-type
+      ⍝ .kill {cursor: default}
+      ⍝ .waypoint:last-of-type .kill, .rev {display: none}
+      ⍝ .waypoint:last-of-type .rev {display: inline-block}
+      ⍝ .waypoint:only-of-type .rev, .waypoint:last-of-type:nth-child(2) .rev,
+      ⍝   .waypoint:only-of-type .move {color: transparent; cursor: default}
+      
+      Add _.title'Tube'
+      'href="../Data/Tube/tube.png" rel="icon"'Add _.link
+      'src=../Data/Tube/tube.png'Add _.img
+      '#title'Add _.h1'TUBE/METRO/SUBWAY PLANNER'
+      Add _.Script'' '../Data/jquery.ui.touch-punch.min.js' ⍝ External JavaScript to make jQuery UIsupport touch
+     
+      inputs←'#inputs'Add _.Form
+      ipcity←'#city' '.sel'inputs.Add _.Chosen cities ⍬ ⍬'[city]'
+      ipcity.On'change' 'ChangeCity'
+      '#waypoints'inputs.Add _.div
+      reorder←inputs.Add _.jqSortable'#waypoints'
+      reorder.On'stop' 'Reroute'('order' 'method' '"toArray"')
+     
+      route←'#route'Add _.pre'Please select city'
+    ∇
+
+    ∇ r←ChangeCity;city;waypoint
+      :Access public
+      r←''
+      city←'\w' ' ' '.'⎕R'\l&' '_' ''⊢_value
+      :If 9=TUBE.⎕NC city
+          CITYDATA←TUBE⍎city
+      :AndIf 2=CITYDATA.⎕NC'source'
+          TUBE.compile CITYDATA
+          STOPS←{(1=≡¨⍵)/⍵}CITYDATA.labels
+          WAYPOINTS←0⍴⊂''
+          WAYPOINTIDS←⍬
+          r←'#waypoints'Replace NewWaypoint ⍬
+          r,←'#route'Replace'Please select a waypoint'
+      :EndIf
+    ∇
+
+    ∇ r←Reroute;route;waypoints;number;waypoint
+      :Access public
+      r←''
+      number←Value _what
+      :Select _event
+      :Case 'sortstop'
+          WAYPOINTS WAYPOINTIDS⌷⍨←⊂⊂WAYPOINTIDS⍳Value Get'order'
+      :Case 'click'
+          :If number=⊃⌽WAYPOINTIDS ⍝ reverse
+              WAYPOINTIDS←⍬
+              r,←'#waypoints'Replace''
+              WAYPOINTS←⌽¯1↓WAYPOINTS
+              :For waypoint :In WAYPOINTS
+                  r,←'#waypoints'Append NewWaypoint waypoint
+              :EndFor
+          :Else ⍝ remove
+              r,←Execute'document.getElementById("',(⍕number)'box").outerHTML=""'
+              WAYPOINTS/⍨←number≠WAYPOINTIDS
+              WAYPOINTIDS/⍨←number≠WAYPOINTIDS
+          :EndIf
+      :Case 'change'
+          WAYPOINTS[WAYPOINTIDS⍳number]←⊂_value
+      :EndSelect
+      :If ''≢⊃⌽WAYPOINTS
+          r,←'#waypoints'Append NewWaypoint ⍬
+      :EndIf
+      :For number :In ¯1↓WAYPOINTIDS/⍨⌽∧\⌽WAYPOINTS∊⊂''
+          r,←Execute'document.getElementById("',(⍕number)'box").outerHTML=""'
+          WAYPOINTS/⍨←number≠WAYPOINTIDS
+          WAYPOINTIDS/⍨←number≠WAYPOINTIDS
+      :EndFor
+      :If 0=≢∊WAYPOINTS
+          r,←'#route'Replace'Please select a waypoint'
+      :Else
+          route←CITYDATA TUBE.trip(⊢⍴⍨2⌈≢)WAYPOINTS~⊂''
+          r,←'#route'Replace route,⎕UCS 10
+      :EndIf
+    ∇
+
+    ∇ waypoint←NewWaypoint selected;newId;sel;kill;rev
+      WAYPOINTIDS,←⊃(⊢~⍨∘⍳1+(⌈/1,⊢))WAYPOINTIDS
+      newId←'#',⍕⊃⌽WAYPOINTIDS
+      :If ⍬≡selected
+          WAYPOINTS,←⊂''
+      :Else
+          selected⍳∘⊂⍨←STOPS
+      :EndIf
+      sel←newId'.sel'New _.Chosen STOPS selected ⍬'[waypoint]'
+      sel.On'change' 'Reroute'
+      waypoint←(newId,'box')'.waypoint'New _.div
+      '.move'waypoint.Add _.span'&#x2B65;' ⍝ updown
+      waypoint.Add sel
+      kill←(newId,'kill')'.kill'waypoint.Add _.span'&#x2573;' ⍝ cross
+      kill.On'click' 'Reroute'
+      rev←(newId,'rev')'.rev'waypoint.Add _.span'&#x2B81' ⍝up and down
+      rev.On'click' 'Reroute'
+     
+    ∇
+
+    Value←(⊃2⊃∘⎕VFI∩∘⎕D)¨∘⊆
+:endclass
