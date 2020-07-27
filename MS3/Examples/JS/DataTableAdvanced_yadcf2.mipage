@@ -50,6 +50,7 @@
           Add 'Error loading ',dyalog,'/ws/loaddata'
           Add 'Files does',((⎕nexists dyalog,'/ws/loaddata')/' not'),' exist'
           Add _.pre ((∊↑⎕dm,¨⎕ucs 13),⎕json ⎕dmx)
+          →0
           :endtrap
       :EndIf
       Add _.Style'#fltcnt' 'width:50%;'              ⍝ limit width of Filter-Container
