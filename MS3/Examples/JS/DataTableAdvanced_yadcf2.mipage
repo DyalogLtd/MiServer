@@ -44,7 +44,13 @@
       dPath←_Request.Server.Config.AppRoot,'examples/data/'
       :If 0=⎕NC'#.LoadData'
           dyalog←2 ⎕NQ'.' 'GetEnvironment' 'dyalog'
+          :trap 0 
           #.⎕CY dyalog,'/ws/loaddata'                ⍝ must be copied to root because of absolute reference #.fileUtilities
+          :else
+          Add 'Error loading ',dyalog,'/ws/loaddata'
+          Add 'Files does',((⎕nexists dyalog,'/ws/loaddata')/' not'),' exist'
+          Add _.pre ((∊↑⎕dm,¨⎕ucs 13),⎕json ⎕dmx)
+          :endtrap
       :EndIf
       Add _.Style'#fltcnt' 'width:50%;'              ⍝ limit width of Filter-Container
       '#fltcnt'Add _.div
