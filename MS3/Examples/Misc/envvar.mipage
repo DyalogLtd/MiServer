@@ -1,0 +1,14 @@
+:Class envvar : MiPageSample
+
+∇ Compose 
+:access public 
+Add _.p ScriptFollows
+⍝ This is a temporary page for intrnal use by dyalog. Please just ignore it and browse <a href="/">elsewhere</a>!
+
+Add _.pre ('DYALOG=',2⎕NQ'.' 'GetEnvironment' 'DYALOG')
+Add _.pre ('dyalog=',2⎕NQ'.' 'getenvironment' 'dyalog')
+
+∇
+
+
+:endclass
